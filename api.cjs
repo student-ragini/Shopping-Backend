@@ -6,7 +6,7 @@ require("dotenv").config();
 
 const app = express();
 
-// middleware
+// ----------------- MIDDLEWARE -----------------
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cors());
@@ -14,7 +14,7 @@ app.use(cors());
 // static files for backend (agar koi image yaha rakhi ho)
 app.use(express.static(path.join(__dirname, "public")));
 
-// ----------------- Mongo config -----------------
+// ----------------- MONGO CONFIG -----------------
 const MONGO_URI =
   process.env.MONGO_URI ||
   "mongodb+srv://ragini_user:Ragini%402728@cluster0.nq1itcw.mongodb.net/ishopdb?retryWrites=true&w=majority&appName=Cluster0";
@@ -24,6 +24,8 @@ const DB_NAME = process.env.DB_NAME || "ishopdb";
 const client = new MongoClient(MONGO_URI);
 
 async function getDb() {
+  // Render par kabhi-kabhi topology property alag hoti hai,
+  // isliye yeh defensive check rakha hai
   if (!client.topology || !client.topology.isConnected?.()) {
     await client.connect();
     console.log("Mongo client connected");
@@ -94,20 +96,20 @@ app.get("/categories", async (req, res) => {
   }
 });
 
-// products by category name  ✅ IMPORTANT FIX
+// products by category name
 app.get("/categories/:category", async (req, res) => {
   try {
     const cat = req.params.category; // e.g. "Men's Fashion"
     const db = await getDb();
 
-    // tumhare db me field "CategoryName" hai, isliye yaha 3 options rakhe
+    // tumhare db me CategoryName field bhi hai
     const documents = await db
       .collection("tblproducts")
       .find({
         $or: [
           { category: cat },
           { Category: cat },
-          { CategoryName: cat }, // <- ye tumhara actual field hai
+          { CategoryName: cat },
         ],
       })
       .toArray();
@@ -352,19 +354,8 @@ app.get("/getcart/:userId", async (req, res) => {
   }
 });
 
-// ----------------- STATIC FRONTEND -----------------
+// ----------------- CATCH-ALL (NO STATIC FRONTEND) -----------------
 
-const frontendPath = path.join(
-  __dirname,
-  "..",
-  "Shopping-Frontend",
-  "ishop-project"
-);
-
-// ye line index.html, css, main.js ko serve karegi
-app.use(express.static(frontendPath));
-
-// agar koi unknown route ho aur vo API nahi hai to index.html bhejo
 app.use((req, res) => {
   const isApi =
     req.path.startsWith("/products") ||
@@ -378,11 +369,11 @@ app.use((req, res) => {
   if (isApi) {
     return res.status(404).json({ error: "API endpoint not found" });
   }
-  try {
-    return res.sendFile(path.join(frontendPath, "index.html"));
-  } catch (err) {
-    return res.send("API is running (frontend not found).");
-  }
+
+  return res.status(200).json({
+    message: "Shopping Backend API is running. Frontend is deployed separately.",
+    path: req.path,
+  });
 });
 
 // ----------------- START SERVER -----------------
