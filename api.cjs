@@ -11,7 +11,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cors());
 
-// static files for backend (agar koi image yaha rakhi ho)
+// static files for backend 
 app.use(express.static(path.join(__dirname, "public")));
 
 // ----------------- MONGO CONFIG -----------------
@@ -24,8 +24,7 @@ const DB_NAME = process.env.DB_NAME || "ishopdb";
 const client = new MongoClient(MONGO_URI);
 
 async function getDb() {
-  // Render par kabhi-kabhi topology property alag hoti hai,
-  // isliye yeh defensive check rakha hai
+  
   if (!client.topology || !client.topology.isConnected?.()) {
     await client.connect();
     console.log("Mongo client connected");
@@ -102,7 +101,7 @@ app.get("/categories/:category", async (req, res) => {
     const cat = req.params.category; // e.g. "Men's Fashion"
     const db = await getDb();
 
-    // tumhare db me CategoryName field bhi hai
+    //  db CategoryName field 
     const documents = await db
       .collection("tblproducts")
       .find({
