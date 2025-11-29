@@ -238,7 +238,7 @@ app.post("/login", async (req, res) => {
         .json({ success: false, message: "Invalid username or password" });
     }
 
-    // compare password with hash
+    // password compare with hash
     const match = await bcrypt.compare(Password, user.Password);
     if (!match) {
       return res
@@ -261,6 +261,7 @@ app.post("/login", async (req, res) => {
 
 // ----------------- ORDERS -----------------
 
+// create order
 app.post("/createorder", async (req, res) => {
   try {
     const db = await getDb();
@@ -397,46 +398,35 @@ app.post("/createorder", async (req, res) => {
   }
 });
 
-// Get all orders OR user-wise orders via ?userId=
-app.get("/orders", async (req, res) => {
-  try {
-    const db = await getDb();
-    const userId = req.query.userId;
-
-    const filter = userId ? { userId: userId } : {};
-    const docs = await db
-      .collection("tblorders")
-      .find(filter)
-      .sort({ createdAt: -1 })
-      .toArray();
-
-    return res.json(docs);
-  } catch (err) {
-    console.error("GET /orders error:", err);
-    return res.status(500).json({ error: "Server error" });
-  }
-});
-
-// Get orders by param /orders/:userId
+// get orders for a user (plus old ones with null userId)
 app.get("/orders/:userId", async (req, res) => {
   try {
-    const db = await getDb();
     const userId = req.params.userId;
+    const db = await getDb();
 
-    const docs = await db
+    const orders = await db
       .collection("tblorders")
-      .find({ userId: userId })
+      .find({
+        $or: [
+          { userId: userId },
+          { userId: null },
+          { userId: "" },
+          { userId: { $exists: false } },
+        ],
+      })
       .sort({ createdAt: -1 })
       .toArray();
 
-    return res.json(docs);
+    res.json({ success: true, orders });
   } catch (err) {
     console.error("GET /orders/:userId error:", err);
-    return res.status(500).json({ error: "Server error" });
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to load orders" });
   }
 });
 
-// ----------------- CART -----------------
+// ----------------- CART (optional) -----------------
 
 app.post("/addtocart", async (req, res) => {
   try {
@@ -509,8 +499,7 @@ app.use((req, res) => {
   }
 
   return res.status(200).json({
-    message:
-      "Shopping Backend API is running. Frontend is deployed separately.",
+    message: "Shopping Backend API is running. Frontend is deployed separately.",
     path: req.path,
   });
 });
