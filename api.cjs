@@ -117,8 +117,7 @@ app.get("/categories/:category", async (req, res) => {
 
 // ----------------- CUSTOMERS -----------------
 
-// all customers (⚠ still returns passwords – sirf internal use ke liye;
-// production me isko kabhi expose mat karna)
+// all customers
 app.get("/getcustomers", async (req, res) => {
   try {
     const db = await getDb();
@@ -130,7 +129,7 @@ app.get("/getcustomers", async (req, res) => {
   }
 });
 
-// register customer (with validation + HASH)
+// register customer (with validation + PASSWORD HASH)
 app.post("/customerregister", async (req, res) => {
   try {
     const {
@@ -148,12 +147,14 @@ app.post("/customerregister", async (req, res) => {
       Password,
     } = req.body;
 
+    // Basic required validation
     if (!UserId || !FirstName || !LastName || !Email || !Password) {
       return res
         .status(400)
         .json({ success: false, message: "Please fill all required fields" });
     }
 
+    // Email format validation
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(Email)) {
       return res
@@ -161,6 +162,7 @@ app.post("/customerregister", async (req, res) => {
         .json({ success: false, message: "Please enter a valid email" });
     }
 
+    // Password length
     if (Password.length < 6) {
       return res.status(400).json({
         success: false,
@@ -168,14 +170,9 @@ app.post("/customerregister", async (req, res) => {
       });
     }
 
-    if (Mobile && Mobile.length < 8) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Please enter a valid mobile number" });
-    }
-
     const db = await getDb();
 
+    // Check if UserId already exists
     const existing = await db
       .collection("tblcustomers")
       .findOne({ UserId: UserId });
@@ -186,7 +183,7 @@ app.post("/customerregister", async (req, res) => {
         .json({ success: false, message: "UserId already exists" });
     }
 
-    // 🔐 HASH password yahan:
+    // 👉 YAHAN PAR PASSWORD HASH HO RAHA HAI
     const hashedPassword = await bcrypt.hash(Password, 10);
 
     const data = {
@@ -201,7 +198,7 @@ app.post("/customerregister", async (req, res) => {
       State,
       Country,
       Mobile,
-      Password: hashedPassword,
+      Password: hashedPassword, // plain nahi, hash store hoga
       createdAt: new Date(),
     };
 
@@ -219,7 +216,7 @@ app.post("/customerregister", async (req, res) => {
   }
 });
 
-// 🔐 NEW: proper login endpoint
+// secure login (server-side password check)
 app.post("/login", async (req, res) => {
   try {
     const { UserId, Password } = req.body;
@@ -241,26 +238,24 @@ app.post("/login", async (req, res) => {
         .json({ success: false, message: "Invalid username or password" });
     }
 
+    // password compare with hash
     const match = await bcrypt.compare(Password, user.Password);
-
     if (!match) {
       return res
         .status(401)
         .json({ success: false, message: "Invalid username or password" });
     }
 
-    // Password correct
     return res.json({
       success: true,
-      message: "Login successful",
+      message: "Login success",
       userId: user.UserId,
-      firstName: user.FirstName,
     });
   } catch (err) {
     console.error("POST /login error:", err);
     res
       .status(500)
-      .json({ success: false, message: "Login failed" });
+      .json({ success: false, message: "Login failed. Server error" });
   }
 });
 
