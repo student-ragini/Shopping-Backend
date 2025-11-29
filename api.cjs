@@ -117,11 +117,14 @@ app.get("/categories/:category", async (req, res) => {
 
 // ----------------- CUSTOMERS -----------------
 
-// all customers  (sirf dev ke liye – prod me mat expose karna)
+// all customers  (⚠️ password hide)
 app.get("/getcustomers", async (req, res) => {
   try {
     const db = await getDb();
-    const documents = await db.collection("tblcustomers").find({}).toArray();
+    const documents = await db
+      .collection("tblcustomers")
+      .find({}, { projection: { Password: 0 } }) // <-- Password field hide
+      .toArray();
     res.json(documents);
   } catch (err) {
     console.error("GET /getcustomers error:", err);
@@ -183,7 +186,7 @@ app.post("/customerregister", async (req, res) => {
         .json({ success: false, message: "UserId already exists" });
     }
 
-    // 🔐 password hashing
+    // hash password
     const hashedPassword = await bcrypt.hash(Password, 10);
 
     const data = {
@@ -198,7 +201,7 @@ app.post("/customerregister", async (req, res) => {
       State,
       Country,
       Mobile,
-      Password: hashedPassword, // hash store hoga
+      Password: hashedPassword, // hash stored
       createdAt: new Date(),
     };
 
@@ -397,6 +400,32 @@ app.post("/createorder", async (req, res) => {
   }
 });
 
+// ⭐ NEW: GET all orders for a user
+app.get("/orders/:userId", async (req, res) => {
+  try {
+    const userId = req.params.userId;
+    if (!userId) {
+      return res
+        .status(400)
+        .json({ success: false, message: "userId is required" });
+    }
+
+    const db = await getDb();
+    const orders = await db
+      .collection("tblorders")
+      .find({ userId })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    return res.json(orders);
+  } catch (err) {
+    console.error("GET /orders/:userId error:", err);
+    res
+      .status(500)
+      .json({ success: false, message: "Unable to fetch orders" });
+  }
+});
+
 // ----------------- CART (optional) -----------------
 
 app.post("/addtocart", async (req, res) => {
@@ -462,7 +491,8 @@ app.use((req, res) => {
     req.path.startsWith("/customer") ||
     req.path.startsWith("/createorder") ||
     req.path.startsWith("/addtocart") ||
-    req.path.startsWith("/login");
+    req.path.startsWith("/login") ||
+    req.path.startsWith("/orders");
 
   if (isApi) {
     return res.status(404).json({ error: "API endpoint not found" });
