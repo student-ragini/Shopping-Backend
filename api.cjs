@@ -2,7 +2,7 @@ const express = require("express");
 const { MongoClient, ObjectId } = require("mongodb");
 const cors = require("cors");
 const path = require("path");
-const bcrypt = require("bcryptjs"); // 🔐 password hashing
+const bcrypt = require("bcryptjs");
 require("dotenv").config();
 
 const app = express();
@@ -117,14 +117,11 @@ app.get("/categories/:category", async (req, res) => {
 
 // ----------------- CUSTOMERS -----------------
 
-// all customers  (⚠️ password hide)
+// all customers
 app.get("/getcustomers", async (req, res) => {
   try {
     const db = await getDb();
-    const documents = await db
-      .collection("tblcustomers")
-      .find({}, { projection: { Password: 0 } }) // <-- Password field hide
-      .toArray();
+    const documents = await db.collection("tblcustomers").find({}).toArray();
     res.json(documents);
   } catch (err) {
     console.error("GET /getcustomers error:", err);
@@ -201,7 +198,7 @@ app.post("/customerregister", async (req, res) => {
       State,
       Country,
       Mobile,
-      Password: hashedPassword, // hash stored
+      Password: hashedPassword,
       createdAt: new Date(),
     };
 
@@ -241,7 +238,7 @@ app.post("/login", async (req, res) => {
         .json({ success: false, message: "Invalid username or password" });
     }
 
-    // password compare with hash
+    // compare password with hash
     const match = await bcrypt.compare(Password, user.Password);
     if (!match) {
       return res
@@ -400,33 +397,46 @@ app.post("/createorder", async (req, res) => {
   }
 });
 
-// ⭐ NEW: GET all orders for a user
-app.get("/orders/:userId", async (req, res) => {
+// Get all orders OR user-wise orders via ?userId=
+app.get("/orders", async (req, res) => {
   try {
-    const userId = req.params.userId;
-    if (!userId) {
-      return res
-        .status(400)
-        .json({ success: false, message: "userId is required" });
-    }
-
     const db = await getDb();
-    const orders = await db
+    const userId = req.query.userId;
+
+    const filter = userId ? { userId: userId } : {};
+    const docs = await db
       .collection("tblorders")
-      .find({ userId })
+      .find(filter)
       .sort({ createdAt: -1 })
       .toArray();
 
-    return res.json(orders);
+    return res.json(docs);
   } catch (err) {
-    console.error("GET /orders/:userId error:", err);
-    res
-      .status(500)
-      .json({ success: false, message: "Unable to fetch orders" });
+    console.error("GET /orders error:", err);
+    return res.status(500).json({ error: "Server error" });
   }
 });
 
-// ----------------- CART (optional) -----------------
+// Get orders by param /orders/:userId
+app.get("/orders/:userId", async (req, res) => {
+  try {
+    const db = await getDb();
+    const userId = req.params.userId;
+
+    const docs = await db
+      .collection("tblorders")
+      .find({ userId: userId })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    return res.json(docs);
+  } catch (err) {
+    console.error("GET /orders/:userId error:", err);
+    return res.status(500).json({ error: "Server error" });
+  }
+});
+
+// ----------------- CART -----------------
 
 app.post("/addtocart", async (req, res) => {
   try {
@@ -499,7 +509,8 @@ app.use((req, res) => {
   }
 
   return res.status(200).json({
-    message: "Shopping Backend API is running. Frontend is deployed separately.",
+    message:
+      "Shopping Backend API is running. Frontend is deployed separately.",
     path: req.path,
   });
 });
