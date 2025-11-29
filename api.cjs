@@ -2,6 +2,7 @@ const express = require("express");
 const { MongoClient, ObjectId } = require("mongodb");
 const cors = require("cors");
 const path = require("path");
+const bcrypt = require("bcryptjs"); // ✅ NEW: for password hashing
 require("dotenv").config();
 
 const app = express();
@@ -100,7 +101,6 @@ app.get("/categories/:category", async (req, res) => {
     const cat = req.params.category; // e.g. "Men's Fashion"
     const db = await getDb();
 
-    //  db CategoryName field
     const documents = await db
       .collection("tblproducts")
       .find({
@@ -117,7 +117,7 @@ app.get("/categories/:category", async (req, res) => {
 
 // ----------------- CUSTOMERS -----------------
 
-// all customers
+// all customers (still available; passwords will be hashed now)
 app.get("/getcustomers", async (req, res) => {
   try {
     const db = await getDb();
@@ -129,7 +129,7 @@ app.get("/getcustomers", async (req, res) => {
   }
 });
 
-// register customer (with validation)
+// register customer (with validation + hashing)
 app.post("/customerregister", async (req, res) => {
   try {
     const {
@@ -190,6 +190,9 @@ app.post("/customerregister", async (req, res) => {
         .json({ success: false, message: "UserId already exists" });
     }
 
+    // ✅ HASH PASSWORD HERE
+    const hashedPassword = await bcrypt.hash(Password, 10);
+
     const data = {
       UserId,
       FirstName,
@@ -202,7 +205,7 @@ app.post("/customerregister", async (req, res) => {
       State,
       Country,
       Mobile,
-      Password, // future: hash with bcrypt
+      Password: hashedPassword, // ✅ store hash, not plain
       createdAt: new Date(),
     };
 
@@ -217,6 +220,52 @@ app.post("/customerregister", async (req, res) => {
     res
       .status(500)
       .json({ success: false, message: "Registration failed" });
+  }
+});
+
+// ✅ NEW: LOGIN API (checks password on server)
+app.post("/login", async (req, res) => {
+  try {
+    const { UserId, Password } = req.body;
+
+    if (!UserId || !Password) {
+      return res
+        .status(400)
+        .json({ success: false, message: "UserId and Password required" });
+    }
+
+    const db = await getDb();
+    const user = await db.collection("tblcustomers").findOne({ UserId });
+
+    if (!user) {
+      return res
+        .status(401)
+        .json({ success: false, message: "Invalid username or password" });
+    }
+
+    const match = await bcrypt.compare(Password, user.Password || "");
+    if (!match) {
+      return res
+        .status(401)
+        .json({ success: false, message: "Invalid username or password" });
+    }
+
+    // Never send password back
+    return res.json({
+      success: true,
+      message: "Login successful",
+      user: {
+        UserId: user.UserId,
+        FirstName: user.FirstName,
+        LastName: user.LastName,
+        Email: user.Email,
+      },
+    });
+  } catch (err) {
+    console.error("POST /login error:", err);
+    res
+      .status(500)
+      .json({ success: false, message: "Login failed" });
   }
 });
 
@@ -422,7 +471,8 @@ app.use((req, res) => {
     req.path.startsWith("/admin") ||
     req.path.startsWith("/customer") ||
     req.path.startsWith("/createorder") ||
-    req.path.startsWith("/addtocart");
+    req.path.startsWith("/addtocart") ||
+    req.path.startsWith("/login");
 
   if (isApi) {
     return res.status(404).json({ error: "API endpoint not found" });
