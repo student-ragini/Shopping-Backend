@@ -11,7 +11,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cors());
 
-// static files for backend 
+// static files for backend
 app.use(express.static(path.join(__dirname, "public")));
 
 // ----------------- MONGO CONFIG -----------------
@@ -24,7 +24,6 @@ const DB_NAME = process.env.DB_NAME || "ishopdb";
 const client = new MongoClient(MONGO_URI);
 
 async function getDb() {
-  
   if (!client.topology || !client.topology.isConnected?.()) {
     await client.connect();
     console.log("Mongo client connected");
@@ -101,15 +100,11 @@ app.get("/categories/:category", async (req, res) => {
     const cat = req.params.category; // e.g. "Men's Fashion"
     const db = await getDb();
 
-    //  db CategoryName field 
+    //  db CategoryName field
     const documents = await db
       .collection("tblproducts")
       .find({
-        $or: [
-          { category: cat },
-          { Category: cat },
-          { CategoryName: cat },
-        ],
+        $or: [{ category: cat }, { Category: cat }, { CategoryName: cat }],
       })
       .toArray();
 
@@ -134,30 +129,94 @@ app.get("/getcustomers", async (req, res) => {
   }
 });
 
-// register customer
+// register customer (with validation)
 app.post("/customerregister", async (req, res) => {
   try {
-    const data = {
-      UserId: req.body.UserId,
-      FirstName: req.body.FirstName,
-      LastName: req.body.LastName,
-      DateOfBirth: req.body.DateOfBirth ? new Date(req.body.DateOfBirth) : null,
-      Email: req.body.Email,
-      Gender: req.body.Gender,
-      Address: req.body.Address,
-      PostalCode: req.body.PostalCode,
-      State: req.body.State,
-      Country: req.body.Country,
-      Mobile: req.body.Mobile,
-      Password: req.body.Password,
-    };
+    const {
+      UserId,
+      FirstName,
+      LastName,
+      DateOfBirth,
+      Email,
+      Gender,
+      Address,
+      PostalCode,
+      State,
+      Country,
+      Mobile,
+      Password,
+    } = req.body;
+
+    // Basic required validation
+    if (!UserId || !FirstName || !LastName || !Email || !Password) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Please fill all required fields" });
+    }
+
+    // Email format validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(Email)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Please enter a valid email" });
+    }
+
+    // Password length
+    if (Password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: "Password must be at least 6 characters long",
+      });
+    }
+
+    // Mobile (optional basic check)
+    if (Mobile && Mobile.length < 8) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Please enter a valid mobile number" });
+    }
 
     const db = await getDb();
+
+    // Check if UserId already exists
+    const existing = await db
+      .collection("tblcustomers")
+      .findOne({ UserId: UserId });
+
+    if (existing) {
+      return res
+        .status(409)
+        .json({ success: false, message: "UserId already exists" });
+    }
+
+    const data = {
+      UserId,
+      FirstName,
+      LastName,
+      DateOfBirth: DateOfBirth ? new Date(DateOfBirth) : null,
+      Email,
+      Gender,
+      Address,
+      PostalCode,
+      State,
+      Country,
+      Mobile,
+      Password, // future: hash with bcrypt
+      createdAt: new Date(),
+    };
+
     await db.collection("tblcustomers").insertOne(data);
-    res.json({ message: "Customer registered" });
+
+    return res.json({
+      success: true,
+      message: "Customer registered successfully",
+    });
   } catch (err) {
     console.error("POST /customerregister error:", err);
-    res.status(500).json({ error: "Registration failed" });
+    res
+      .status(500)
+      .json({ success: false, message: "Registration failed" });
   }
 });
 
