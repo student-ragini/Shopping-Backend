@@ -2,7 +2,7 @@ const express = require("express");
 const { MongoClient, ObjectId } = require("mongodb");
 const cors = require("cors");
 const path = require("path");
-const bcrypt = require("bcryptjs"); // 🔐 NEW
+const bcrypt = require("bcryptjs"); // 🔐 password hashing
 require("dotenv").config();
 
 const app = express();
@@ -117,7 +117,7 @@ app.get("/categories/:category", async (req, res) => {
 
 // ----------------- CUSTOMERS -----------------
 
-// all customers
+// all customers  (sirf dev ke liye – prod me mat expose karna)
 app.get("/getcustomers", async (req, res) => {
   try {
     const db = await getDb();
@@ -183,7 +183,7 @@ app.post("/customerregister", async (req, res) => {
         .json({ success: false, message: "UserId already exists" });
     }
 
-    // 👉 YAHAN PAR PASSWORD HASH HO RAHA HAI
+    // 🔐 password hashing
     const hashedPassword = await bcrypt.hash(Password, 10);
 
     const data = {
@@ -198,7 +198,7 @@ app.post("/customerregister", async (req, res) => {
       State,
       Country,
       Mobile,
-      Password: hashedPassword, // plain nahi, hash store hoga
+      Password: hashedPassword, // hash store hoga
       createdAt: new Date(),
     };
 
