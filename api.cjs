@@ -11,6 +11,8 @@ const app = express();
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cors());
+// extra: handle OPTIONS (pre-flight) for all routes
+app.options("*", cors());
 
 // static files for backend
 app.use(express.static(path.join(__dirname, "public")));
@@ -117,7 +119,7 @@ app.get("/categories/:category", async (req, res) => {
 
 // ----------------- CUSTOMERS -----------------
 
-// all customers (admin style, not used in UI)
+// all customers
 app.get("/getcustomers", async (req, res) => {
   try {
     const db = await getDb();
@@ -147,14 +149,12 @@ app.post("/customerregister", async (req, res) => {
       Password,
     } = req.body;
 
-    // Basic required validation
     if (!UserId || !FirstName || !LastName || !Email || !Password) {
       return res
         .status(400)
         .json({ success: false, message: "Please fill all required fields" });
     }
 
-    // Email format validation
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(Email)) {
       return res
@@ -162,7 +162,6 @@ app.post("/customerregister", async (req, res) => {
         .json({ success: false, message: "Please enter a valid email" });
     }
 
-    // Password length
     if (Password.length < 6) {
       return res.status(400).json({
         success: false,
@@ -172,7 +171,6 @@ app.post("/customerregister", async (req, res) => {
 
     const db = await getDb();
 
-    // Check if UserId already exists
     const existing = await db
       .collection("tblcustomers")
       .findOne({ UserId: UserId });
@@ -183,7 +181,6 @@ app.post("/customerregister", async (req, res) => {
         .json({ success: false, message: "UserId already exists" });
     }
 
-    // hash password
     const hashedPassword = await bcrypt.hash(Password, 10);
 
     const data = {
@@ -238,7 +235,6 @@ app.post("/login", async (req, res) => {
         .json({ success: false, message: "Invalid username or password" });
     }
 
-    // password compare with hash
     const match = await bcrypt.compare(Password, user.Password);
     if (!match) {
       return res
@@ -259,7 +255,7 @@ app.post("/login", async (req, res) => {
   }
 });
 
-/* ------------ NEW: PROFILE (GET + UPDATE) ------------- */
+/* ------------ PROFILE (GET + UPDATE) ------------- */
 
 // GET /customers/:userId  -> profile data
 app.get("/customers/:userId", async (req, res) => {
@@ -271,7 +267,7 @@ app.get("/customers/:userId", async (req, res) => {
       { UserId: userId },
       {
         projection: {
-          Password: 0, // password hide
+          Password: 0, // hide password
         },
       }
     );
@@ -290,6 +286,9 @@ app.get("/customers/:userId", async (req, res) => {
       .json({ success: false, message: "Error fetching profile" });
   }
 });
+
+// explicitly allow preflight for this route too
+app.options("/customers/:userId", cors());
 
 // PUT /customers/:userId -> profile update
 app.put("/customers/:userId", async (req, res) => {
@@ -326,7 +325,6 @@ app.put("/customers/:userId", async (req, res) => {
       },
     };
 
-    // Agar naya password diya hai to hash karke set karo
     if (Password && String(Password).trim() !== "") {
       if (String(Password).trim().length < 6) {
         return res.status(400).json({
@@ -503,7 +501,7 @@ app.post("/createorder", async (req, res) => {
   }
 });
 
-// get orders for a user (plus old ones with null userId)
+// get orders for a user
 app.get("/orders/:userId", async (req, res) => {
   try {
     const userId = req.params.userId;
@@ -585,7 +583,7 @@ app.get("/getcart/:userId", async (req, res) => {
   }
 });
 
-// ----------------- CATCH-ALL (NO STATIC FRONTEND) -----------------
+// ----------------- CATCH-ALL -----------------
 
 app.use((req, res) => {
   const isApi =
