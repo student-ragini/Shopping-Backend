@@ -117,7 +117,7 @@ app.get("/categories/:category", async (req, res) => {
 
 // ----------------- CUSTOMERS -----------------
 
-// all customers
+// all customers (admin style, not used in UI)
 app.get("/getcustomers", async (req, res) => {
   try {
     const db = await getDb();
@@ -256,6 +256,111 @@ app.post("/login", async (req, res) => {
     res
       .status(500)
       .json({ success: false, message: "Login failed. Server error" });
+  }
+});
+
+/* ------------ NEW: PROFILE (GET + UPDATE) ------------- */
+
+// GET /customers/:userId  -> profile data
+app.get("/customers/:userId", async (req, res) => {
+  try {
+    const userId = req.params.userId;
+    const db = await getDb();
+
+    const customer = await db.collection("tblcustomers").findOne(
+      { UserId: userId },
+      {
+        projection: {
+          Password: 0, // password hide
+        },
+      }
+    );
+
+    if (!customer) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    return res.json({ success: true, customer });
+  } catch (err) {
+    console.error("GET /customers/:userId error:", err);
+    res
+      .status(500)
+      .json({ success: false, message: "Error fetching profile" });
+  }
+});
+
+// PUT /customers/:userId -> profile update
+app.put("/customers/:userId", async (req, res) => {
+  try {
+    const userId = req.params.userId;
+    const {
+      FirstName,
+      LastName,
+      DateOfBirth,
+      Email,
+      Gender,
+      Address,
+      PostalCode,
+      State,
+      Country,
+      Mobile,
+      Password,
+    } = req.body;
+
+    const db = await getDb();
+
+    const updateDoc = {
+      $set: {
+        FirstName: FirstName || "",
+        LastName: LastName || "",
+        DateOfBirth: DateOfBirth ? new Date(DateOfBirth) : null,
+        Email: Email || "",
+        Gender: Gender || "",
+        Address: Address || "",
+        PostalCode: PostalCode || "",
+        State: State || "",
+        Country: Country || "",
+        Mobile: Mobile || "",
+      },
+    };
+
+    // Agar naya password diya hai to hash karke set karo
+    if (Password && String(Password).trim() !== "") {
+      if (String(Password).trim().length < 6) {
+        return res.status(400).json({
+          success: false,
+          message: "New password must be at least 6 characters.",
+        });
+      }
+      const hashed = await bcrypt.hash(String(Password).trim(), 10);
+      updateDoc.$set.Password = hashed;
+    }
+
+    const result = await db
+      .collection("tblcustomers")
+      .findOneAndUpdate({ UserId: userId }, updateDoc, {
+        returnDocument: "after",
+        projection: { Password: 0 },
+      });
+
+    if (!result.value) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    return res.json({
+      success: true,
+      message: "Profile updated successfully",
+      customer: result.value,
+    });
+  } catch (err) {
+    console.error("PUT /customers/:userId error:", err);
+    res
+      .status(500)
+      .json({ success: false, message: "Profile update failed" });
   }
 });
 
@@ -492,7 +597,8 @@ app.use((req, res) => {
     req.path.startsWith("/createorder") ||
     req.path.startsWith("/addtocart") ||
     req.path.startsWith("/login") ||
-    req.path.startsWith("/orders");
+    req.path.startsWith("/orders") ||
+    req.path.startsWith("/customers");
 
   if (isApi) {
     return res.status(404).json({ error: "API endpoint not found" });
