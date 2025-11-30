@@ -7,17 +7,15 @@ require("dotenv").config();
 
 const app = express();
 
-// ----------------- MIDDLEWARE -----------------
+/* ----------------- MIDDLEWARE ----------------- */
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cors());
-// extra: handle OPTIONS (pre-flight) for all routes
-app.options("*", cors());
 
-// static files for backend
+// static files for backend (agar kabhi chahiye ho)
 app.use(express.static(path.join(__dirname, "public")));
 
-// ----------------- MONGO CONFIG -----------------
+/* ----------------- MONGO CONFIG ----------------- */
 const MONGO_URI =
   process.env.MONGO_URI ||
   "mongodb+srv://ragini_user:Ragini%402728@cluster0.nq1itcw.mongodb.net/ishopdb?retryWrites=true&w=majority&appName=Cluster0";
@@ -35,7 +33,7 @@ async function getDb() {
   return client.db(DB_NAME);
 }
 
-// ----------------- PRODUCTS -----------------
+/* ----------------- PRODUCTS ----------------- */
 
 // all products
 app.get("/getproducts", async (req, res) => {
@@ -83,7 +81,7 @@ app.get("/products/:id", async (req, res) => {
   }
 });
 
-// ----------------- CATEGORIES -----------------
+/* ----------------- CATEGORIES ----------------- */
 
 // list of all categories
 app.get("/categories", async (req, res) => {
@@ -117,9 +115,9 @@ app.get("/categories/:category", async (req, res) => {
   }
 });
 
-// ----------------- CUSTOMERS -----------------
+/* ----------------- CUSTOMERS ----------------- */
 
-// all customers
+// all customers (admin style, not used in UI)
 app.get("/getcustomers", async (req, res) => {
   try {
     const db = await getDb();
@@ -149,12 +147,14 @@ app.post("/customerregister", async (req, res) => {
       Password,
     } = req.body;
 
+    // Basic required validation
     if (!UserId || !FirstName || !LastName || !Email || !Password) {
       return res
         .status(400)
         .json({ success: false, message: "Please fill all required fields" });
     }
 
+    // Email format validation
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(Email)) {
       return res
@@ -162,6 +162,7 @@ app.post("/customerregister", async (req, res) => {
         .json({ success: false, message: "Please enter a valid email" });
     }
 
+    // Password length
     if (Password.length < 6) {
       return res.status(400).json({
         success: false,
@@ -171,6 +172,7 @@ app.post("/customerregister", async (req, res) => {
 
     const db = await getDb();
 
+    // Check if UserId already exists
     const existing = await db
       .collection("tblcustomers")
       .findOne({ UserId: UserId });
@@ -181,6 +183,7 @@ app.post("/customerregister", async (req, res) => {
         .json({ success: false, message: "UserId already exists" });
     }
 
+    // hash password
     const hashedPassword = await bcrypt.hash(Password, 10);
 
     const data = {
@@ -235,6 +238,7 @@ app.post("/login", async (req, res) => {
         .json({ success: false, message: "Invalid username or password" });
     }
 
+    // password compare with hash
     const match = await bcrypt.compare(Password, user.Password);
     if (!match) {
       return res
@@ -287,9 +291,6 @@ app.get("/customers/:userId", async (req, res) => {
   }
 });
 
-// explicitly allow preflight for this route too
-app.options("/customers/:userId", cors());
-
 // PUT /customers/:userId -> profile update
 app.put("/customers/:userId", async (req, res) => {
   try {
@@ -325,6 +326,7 @@ app.put("/customers/:userId", async (req, res) => {
       },
     };
 
+    // Agar naya password diya hai to hash karke set karo
     if (Password && String(Password).trim() !== "") {
       if (String(Password).trim().length < 6) {
         return res.status(400).json({
@@ -362,7 +364,7 @@ app.put("/customers/:userId", async (req, res) => {
   }
 });
 
-// ----------------- ORDERS -----------------
+/* ----------------- ORDERS ----------------- */
 
 // create order
 app.post("/createorder", async (req, res) => {
@@ -501,7 +503,7 @@ app.post("/createorder", async (req, res) => {
   }
 });
 
-// get orders for a user
+// get orders for a user (plus old ones with null userId)
 app.get("/orders/:userId", async (req, res) => {
   try {
     const userId = req.params.userId;
@@ -529,7 +531,7 @@ app.get("/orders/:userId", async (req, res) => {
   }
 });
 
-// ----------------- CART (optional) -----------------
+/* ----------------- CART (optional) ----------------- */
 
 app.post("/addtocart", async (req, res) => {
   try {
@@ -583,22 +585,22 @@ app.get("/getcart/:userId", async (req, res) => {
   }
 });
 
-// ----------------- CATCH-ALL -----------------
+/* ----------------- CATCH-ALL (SAFE) ----------------- */
 
 app.use((req, res) => {
-  const isApi =
-    req.path.startsWith("/products") ||
-    req.path.startsWith("/get") ||
-    req.path.startsWith("/categories") ||
-    req.path.startsWith("/admin") ||
-    req.path.startsWith("/customer") ||
-    req.path.startsWith("/createorder") ||
-    req.path.startsWith("/addtocart") ||
-    req.path.startsWith("/login") ||
-    req.path.startsWith("/orders") ||
-    req.path.startsWith("/customers");
+  const apiPrefixes = [
+    "/products",
+    "/get",
+    "/categories",
+    "/createorder",
+    "/addtocart",
+    "/login",
+    "/orders",
+    "/customers",
+    "/customerregister",
+  ];
 
-  if (isApi) {
+  if (apiPrefixes.some((prefix) => req.path.startsWith(prefix))) {
     return res.status(404).json({ error: "API endpoint not found" });
   }
 
@@ -608,7 +610,7 @@ app.use((req, res) => {
   });
 });
 
-// ----------------- START SERVER -----------------
+/* ----------------- START SERVER ----------------- */
 const PORT = process.env.PORT || 4400;
 app.listen(PORT, () =>
   console.log(`API Starter http://127.0.0.1:${PORT}`)
