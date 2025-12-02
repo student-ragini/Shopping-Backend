@@ -7,15 +7,15 @@ require("dotenv").config();
 
 const app = express();
 
-/* ----------------- MIDDLEWARE ----------------- */
+// ----------------- MIDDLEWARE -----------------
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cors());
 
-// static files for backend (agar kabhi chahiye ho)
+// static files for backend
 app.use(express.static(path.join(__dirname, "public")));
 
-/* ----------------- MONGO CONFIG ----------------- */
+// ----------------- MONGO CONFIG -----------------
 const MONGO_URI =
   process.env.MONGO_URI ||
   "mongodb+srv://ragini_user:Ragini%402728@cluster0.nq1itcw.mongodb.net/ishopdb?retryWrites=true&w=majority&appName=Cluster0";
@@ -33,7 +33,7 @@ async function getDb() {
   return client.db(DB_NAME);
 }
 
-/* ----------------- PRODUCTS ----------------- */
+// ----------------- PRODUCTS -----------------
 
 // all products
 app.get("/getproducts", async (req, res) => {
@@ -81,7 +81,7 @@ app.get("/products/:id", async (req, res) => {
   }
 });
 
-/* ----------------- CATEGORIES ----------------- */
+// ----------------- CATEGORIES -----------------
 
 // list of all categories
 app.get("/categories", async (req, res) => {
@@ -115,7 +115,7 @@ app.get("/categories/:category", async (req, res) => {
   }
 });
 
-/* ----------------- CUSTOMERS ----------------- */
+// ----------------- CUSTOMERS -----------------
 
 // all customers (admin style, not used in UI)
 app.get("/getcustomers", async (req, res) => {
@@ -259,7 +259,7 @@ app.post("/login", async (req, res) => {
   }
 });
 
-/* ------------ PROFILE (GET + UPDATE) ------------- */
+/* ------------ NEW: PROFILE (GET + UPDATE) ------------- */
 
 // GET /customers/:userId  -> profile data
 app.get("/customers/:userId", async (req, res) => {
@@ -271,7 +271,7 @@ app.get("/customers/:userId", async (req, res) => {
       { UserId: userId },
       {
         projection: {
-          Password: 0, // hide password
+          Password: 0, // password hide
         },
       }
     );
@@ -364,7 +364,7 @@ app.put("/customers/:userId", async (req, res) => {
   }
 });
 
-/* ----------------- ORDERS ----------------- */
+// ----------------- ORDERS -----------------
 
 // create order
 app.post("/createorder", async (req, res) => {
@@ -531,7 +531,7 @@ app.get("/orders/:userId", async (req, res) => {
   }
 });
 
-/* ----------------- CART (optional) ----------------- */
+// ----------------- CART (optional) -----------------
 
 app.post("/addtocart", async (req, res) => {
   try {
@@ -585,22 +585,22 @@ app.get("/getcart/:userId", async (req, res) => {
   }
 });
 
-/* ----------------- CATCH-ALL (SAFE) ----------------- */
+// ----------------- CATCH-ALL (NO STATIC FRONTEND) -----------------
 
 app.use((req, res) => {
-  const apiPrefixes = [
-    "/products",
-    "/get",
-    "/categories",
-    "/createorder",
-    "/addtocart",
-    "/login",
-    "/orders",
-    "/customers",
-    "/customerregister",
-  ];
+  const isApi =
+    req.path.startsWith("/products") ||
+    req.path.startsWith("/get") ||
+    req.path.startsWith("/categories") ||
+    req.path.startsWith("/admin") ||
+    req.path.startsWith("/customer") ||
+    req.path.startsWith("/createorder") ||
+    req.path.startsWith("/addtocart") ||
+    req.path.startsWith("/login") ||
+    req.path.startsWith("/orders") ||
+    req.path.startsWith("/customers");
 
-  if (apiPrefixes.some((prefix) => req.path.startsWith(prefix))) {
+  if (isApi) {
     return res.status(404).json({ error: "API endpoint not found" });
   }
 
@@ -610,7 +610,7 @@ app.use((req, res) => {
   });
 });
 
-/* ----------------- START SERVER ----------------- */
+// ----------------- START SERVER -----------------
 const PORT = process.env.PORT || 4400;
 app.listen(PORT, () =>
   console.log(`API Starter http://127.0.0.1:${PORT}`)
