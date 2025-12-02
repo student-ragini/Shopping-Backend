@@ -1,4 +1,3 @@
-// api.cjs
 const express = require("express");
 const { MongoClient, ObjectId } = require("mongodb");
 const cors = require("cors");
@@ -8,15 +7,20 @@ require("dotenv").config();
 
 const app = express();
 
-/* ----------------- MIDDLEWARE ----------------- */
+/* =========================
+ *  MIDDLEWARE
+ * ======================= */
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cors());
 
-// Serve static files from /public (optional)
+// backend static files (public folder)
 app.use(express.static(path.join(__dirname, "public")));
 
-/* ----------------- MONGO CONFIG ----------------- */
+/* =========================
+ *  MONGO CONFIG
+ * ======================= */
+
 const MONGO_URI =
   process.env.MONGO_URI ||
   "mongodb+srv://ragini_user:Ragini%402728@cluster0.nq1itcw.mongodb.net/ishopdb?retryWrites=true&w=majority&appName=Cluster0";
@@ -28,26 +32,28 @@ const client = new MongoClient(MONGO_URI);
 async function getDb() {
   if (!client.topology || !client.topology.isConnected?.()) {
     await client.connect();
-    console.log("✅ Mongo client connected");
+    console.log("Mongo client connected");
   }
   return client.db(DB_NAME);
 }
 
-/* ----------------- PRODUCTS ----------------- */
+/* =========================
+ *  PRODUCTS
+ * ======================= */
 
-// GET all products
+// all products
 app.get("/getproducts", async (req, res) => {
   try {
     const db = await getDb();
-    const docs = await db.collection("tblproducts").find({}).toArray();
-    res.json(docs);
+    const documents = await db.collection("tblproducts").find({}).toArray();
+    res.json(documents);
   } catch (err) {
     console.error("GET /getproducts error:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
 
-// GET single product by id / _id / product_id
+// single product by numeric id OR _id string etc.
 app.get("/products/:id", async (req, res) => {
   try {
     const rawId = req.params.id;
@@ -68,68 +74,72 @@ app.get("/products/:id", async (req, res) => {
       if (doc) return res.json(doc);
     }
 
-    // 3) other string id
+    // 3) fallback: product_id / id / title string
     const doc = await db.collection("tblproducts").findOne({
       $or: [{ product_id: rawId }, { id: rawId }, { title: rawId }],
     });
 
     if (!doc) return res.status(404).json({ error: "Product not found" });
-    res.json(doc);
+    return res.json(doc);
   } catch (err) {
     console.error("GET /products/:id error:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
 
-/* ----------------- CATEGORIES ----------------- */
+/* =========================
+ *  CATEGORIES
+ * ======================= */
 
-// GET all categories
+// list of all categories
 app.get("/categories", async (req, res) => {
   try {
     const db = await getDb();
-    const docs = await db.collection("tblcategories").find({}).toArray();
-    res.json(docs);
+    const documents = await db.collection("tblcategories").find({}).toArray();
+    res.json(documents);
   } catch (err) {
     console.error("GET /categories error:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
 
-// GET products by category name
+// products by category name
 app.get("/categories/:category", async (req, res) => {
   try {
-    const cat = req.params.category;
+    const cat = req.params.category; // e.g. "Men's Fashion"
     const db = await getDb();
 
-    const docs = await db
+    const documents = await db
       .collection("tblproducts")
       .find({
         $or: [{ category: cat }, { Category: cat }, { CategoryName: cat }],
       })
       .toArray();
 
-    res.json(docs);
+    res.json(documents);
   } catch (err) {
     console.error("GET /categories/:category error:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
 
-/* ----------------- CUSTOMERS (REGISTER + LOGIN) ----------------- */
+/* =========================
+ *  CUSTOMERS (REGISTER / LOGIN)
+ * ======================= */
 
-// (Admin style) GET all customers
+// all customers (admin use)
 app.get("/getcustomers", async (req, res) => {
   try {
     const db = await getDb();
-    const docs = await db.collection("tblcustomers").find({}).toArray();
-    res.json(docs);
+    const documents = await db.collection("tblcustomers").find({}).toArray();
+    res.json(documents);
   } catch (err) {
     console.error("GET /getcustomers error:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
 
-// POST /customerregister
+// register customer
 app.post("/customerregister", async (req, res) => {
   try {
     const {
@@ -181,7 +191,7 @@ app.post("/customerregister", async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(Password, 10);
 
-    const doc = {
+    const data = {
       UserId,
       FirstName,
       LastName,
@@ -197,9 +207,9 @@ app.post("/customerregister", async (req, res) => {
       createdAt: new Date(),
     };
 
-    await db.collection("tblcustomers").insertOne(doc);
+    await db.collection("tblcustomers").insertOne(data);
 
-    res.json({
+    return res.json({
       success: true,
       message: "Customer registered successfully",
     });
@@ -211,7 +221,7 @@ app.post("/customerregister", async (req, res) => {
   }
 });
 
-// POST /login
+// secure login
 app.post("/login", async (req, res) => {
   try {
     const { UserId, Password } = req.body;
@@ -240,7 +250,7 @@ app.post("/login", async (req, res) => {
         .json({ success: false, message: "Invalid username or password" });
     }
 
-    res.json({
+    return res.json({
       success: true,
       message: "Login success",
       userId: user.UserId,
@@ -253,9 +263,11 @@ app.post("/login", async (req, res) => {
   }
 });
 
-/* ------------ PROFILE (GET + UPDATE) ------------- */
+/* =========================
+ *  PROFILE (GET + UPDATE)
+ * ======================= */
 
-// GET /customers/:userId  -> profile data
+// GET /customers/:userId -> profile data
 app.get("/customers/:userId", async (req, res) => {
   try {
     const userId = req.params.userId;
@@ -265,7 +277,7 @@ app.get("/customers/:userId", async (req, res) => {
       { UserId: userId },
       {
         projection: {
-          Password: 0, // hide password
+          Password: 0, // don't send password
         },
       }
     );
@@ -276,7 +288,7 @@ app.get("/customers/:userId", async (req, res) => {
         .json({ success: false, message: "User not found" });
     }
 
-    res.json({ success: true, customer });
+    return res.json({ success: true, customer });
   } catch (err) {
     console.error("GET /customers/:userId error:", err);
     res
@@ -300,7 +312,7 @@ app.put("/customers/:userId", async (req, res) => {
       State,
       Country,
       Mobile,
-      Password,
+      Password, // optional new password
     } = req.body;
 
     const db = await getDb();
@@ -320,7 +332,7 @@ app.put("/customers/:userId", async (req, res) => {
       },
     };
 
-    // New password (optional)
+    // If password provided → validate & hash
     if (Password && String(Password).trim() !== "") {
       if (String(Password).trim().length < 6) {
         return res.status(400).json({
@@ -345,7 +357,7 @@ app.put("/customers/:userId", async (req, res) => {
         .json({ success: false, message: "User not found" });
     }
 
-    res.json({
+    return res.json({
       success: true,
       message: "Profile updated successfully",
       customer: result.value,
@@ -358,15 +370,19 @@ app.put("/customers/:userId", async (req, res) => {
   }
 });
 
-/* ----------------- ORDERS ----------------- */
+/* =========================
+ *  ORDERS
+ * ======================= */
 
-// POST /createorder
+// create order
 app.post("/createorder", async (req, res) => {
   try {
     const db = await getDb();
-    const payload = req.body;
 
-    if (!payload || !Array.isArray(payload.items) || !payload.items.length) {
+    const payload = req.body;
+    console.log("CreateOrder payload:", JSON.stringify(payload, null, 2));
+
+    if (!payload || !Array.isArray(payload.items) || payload.items.length === 0) {
       return res
         .status(400)
         .json({ success: false, message: "Invalid payload: items required" });
@@ -422,21 +438,20 @@ app.post("/createorder", async (req, res) => {
       const key = String(it.productId);
       const prod = productMap[key];
       if (!prod) {
+        console.error("Product not found for item:", it);
         return res.status(400).json({
           success: false,
           message: `Product not found: ${it.productId}`,
         });
       }
-
       const unitPrice = Number(prod.price || 0);
       const qty = Number(it.qty || 1);
       if (isNaN(unitPrice)) {
-        return res.status(500).json({
-          success: false,
-          message: "Server product price error",
-        });
+        console.error("Invalid price in DB for product", prod);
+        return res
+          .status(500)
+          .json({ success: false, message: "Server product price error" });
       }
-
       const lineTotal = unitPrice * qty;
       computedSubtotal += lineTotal;
 
@@ -449,12 +464,26 @@ app.post("/createorder", async (req, res) => {
       });
     }
 
+    if (payload.subtotal !== undefined) {
+      const diff = Math.abs(Number(payload.subtotal) - computedSubtotal);
+      if (diff > 0.5) {
+        console.warn(
+          "Subtotal mismatch: client sent",
+          payload.subtotal,
+          "computed",
+          computedSubtotal
+        );
+        return res
+          .status(400)
+          .json({ success: false, message: "Subtotal mismatch" });
+      }
+    }
+
     const shipping = Number(payload.shipping || 0);
     const tax = Number(payload.tax || 0);
-    const total =
-      payload.total !== undefined
-        ? Number(payload.total)
-        : computedSubtotal + shipping + tax;
+    const total = Number(
+      payload.total || computedSubtotal + shipping + tax
+    );
 
     const orderDoc = {
       userId: payload.userId || null,
@@ -468,22 +497,22 @@ app.post("/createorder", async (req, res) => {
     };
 
     const insertRes = await db.collection("tblorders").insertOne(orderDoc);
+    console.log("Order inserted:", insertRes.insertedId);
 
-    res.json({
+    return res.json({
       success: true,
       orderId: String(insertRes.insertedId),
       message: "Order created",
     });
   } catch (err) {
     console.error("Create order failed:", err);
-    res.status(500).json({
-      success: false,
-      message: err.message || "Unknown server error",
-    });
+    return res
+      .status(500)
+      .json({ success: false, message: err.message || "Unknown server error" });
   }
 });
 
-// GET /orders/:userId
+// get orders for a user
 app.get("/orders/:userId", async (req, res) => {
   try {
     const userId = req.params.userId;
@@ -511,7 +540,9 @@ app.get("/orders/:userId", async (req, res) => {
   }
 });
 
-/* ----------------- CART (OPTIONAL) ----------------- */
+/* =========================
+ *  CART (optional)
+ * ======================= */
 
 app.post("/addtocart", async (req, res) => {
   try {
@@ -531,7 +562,7 @@ app.post("/addtocart", async (req, res) => {
     if (existing) {
       await db.collection("tblshoppingcart").updateOne(
         { userId, productId },
-        { $set: { qty: (existing.qty || 1) + (qty || 1) } }
+        { $set: { qty: existing.qty + (qty || 1) } }
       );
     } else {
       await db.collection("tblshoppingcart").insertOne({
@@ -558,7 +589,6 @@ app.get("/getcart/:userId", async (req, res) => {
       .collection("tblshoppingcart")
       .find({ userId })
       .toArray();
-
     res.json(cart);
   } catch (err) {
     console.error("GET /getcart error:", err);
@@ -566,7 +596,9 @@ app.get("/getcart/:userId", async (req, res) => {
   }
 });
 
-/* ----------------- CATCH-ALL (NO FRONTEND HERE) ----------------- */
+/* =========================
+ *  CATCH-ALL (NO STATIC FRONTEND)
+ * ======================= */
 
 app.use((req, res) => {
   const isApi =
@@ -575,24 +607,27 @@ app.use((req, res) => {
     req.path.startsWith("/categories") ||
     req.path.startsWith("/admin") ||
     req.path.startsWith("/customer") ||
-    req.path.startsWith("/customers") ||
     req.path.startsWith("/createorder") ||
     req.path.startsWith("/addtocart") ||
     req.path.startsWith("/login") ||
-    req.path.startsWith("/orders");
+    req.path.startsWith("/orders") ||
+    req.path.startsWith("/customers");
 
   if (isApi) {
     return res.status(404).json({ error: "API endpoint not found" });
   }
 
-  res.status(200).json({
+  return res.status(200).json({
     message: "Shopping Backend API is running. Frontend is deployed separately.",
     path: req.path,
   });
 });
 
-/* ----------------- START SERVER ----------------- */
+/* =========================
+ *  START SERVER
+ * ======================= */
+
 const PORT = process.env.PORT || 4400;
-app.listen(PORT, () => {
-  console.log(`🚀 API Starter http://127.0.0.1:${PORT}`);
-});
+app.listen(PORT, () =>
+  console.log(`API Starter http://127.0.0.1:${PORT}`)
+);
