@@ -1,3 +1,4 @@
+// api.cjs
 const express = require("express");
 const { MongoClient, ObjectId } = require("mongodb");
 const cors = require("cors");
@@ -10,7 +11,29 @@ const app = express();
 // ----------------- MIDDLEWARE -----------------
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
-app.use(cors());
+
+// CORS: allow frontend origins (loose by default)
+app.use(
+  cors({
+    origin: true,
+    credentials: true,
+    methods: "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS",
+  })
+);
+
+// handle preflight globally
+app.options("*", (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", req.headers.origin || "*");
+  res.setHeader(
+    "Access-Control-Allow-Methods",
+    "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS"
+  );
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    req.headers["access-control-request-headers"] || "Content-Type"
+  );
+  return res.status(204).end();
+});
 
 // static files for backend (optional)
 app.use(express.static(path.join(__dirname, "public")));
@@ -22,9 +45,10 @@ const MONGO_URI =
 
 const DB_NAME = process.env.DB_NAME || "ishopdb";
 
-const client = new MongoClient(MONGO_URI);
+const client = new MongoClient(MONGO_URI, {});
 
 async function getDb() {
+  // connect if not connected
   if (!client.topology || !client.topology.isConnected?.()) {
     await client.connect();
     console.log("Mongo client connected");
@@ -270,9 +294,20 @@ app.get("/customers/:userId", async (req, res) => {
     );
 
     if (!customer) {
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found" });
+      // fallback: maybe userId is actually _id or userId in other case
+      // try other keys quickly
+      let fallback = null;
+      if (/^[0-9a-fA-F]{24}$/.test(userId)) {
+        fallback = await db
+          .collection("tblcustomers")
+          .findOne({ _id: new ObjectId(userId) }, { projection: { Password: 0 } });
+      }
+      if (!customer && !fallback) {
+        return res
+          .status(404)
+          .json({ success: false, message: "User not found" });
+      }
+      return res.json({ success: true, customer: fallback });
     }
 
     return res.json({ success: true, customer });
@@ -284,7 +319,7 @@ app.get("/customers/:userId", async (req, res) => {
   }
 });
 
-// UPDATE profile
+// UPDATE profile (robust)
 app.put("/customers/:userId", async (req, res) => {
   try {
     const userId = req.params.userId;
@@ -302,8 +337,11 @@ app.put("/customers/:userId", async (req, res) => {
       Password,
     } = req.body;
 
+    console.log("PUT /customers/:userId called for:", userId);
+
     const db = await getDb();
 
+    // build updateDoc
     const updateDoc = {
       $set: {
         FirstName: FirstName || "",
@@ -330,17 +368,27 @@ app.put("/customers/:userId", async (req, res) => {
       updateDoc.$set.Password = hashed;
     }
 
-    const result = await db
-      .collection("tblcustomers")
-      .findOneAndUpdate({ UserId: userId }, updateDoc, {
-        returnDocument: "after",
-        projection: { Password: 0 },
-      });
+    // try multiple filters to match user: UserId / userId / _id
+    const filters = [{ UserId: userId }, { userId: userId }];
+    if (/^[0-9a-fA-F]{24}$/.test(userId)) {
+      try {
+        filters.push({ _id: new ObjectId(userId) });
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    console.log("Attempting update with filters:", filters);
+
+    const result = await db.collection("tblcustomers").findOneAndUpdate(
+      { $or: filters },
+      updateDoc,
+      { returnDocument: "after", projection: { Password: 0 } }
+    );
 
     if (!result.value) {
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found" });
+      console.log("No document matched for update. Filters tried:", filters);
+      return res.status(404).json({ success: false, message: "User not found" });
     }
 
     return res.json({
@@ -350,9 +398,58 @@ app.put("/customers/:userId", async (req, res) => {
     });
   } catch (err) {
     console.error("PUT /customers/:userId error:", err);
-    res
-      .status(500)
-      .json({ success: false, message: "Profile update failed" });
+    return res.status(500).json({ success: false, message: "Profile update failed" });
+  }
+});
+
+// fallback endpoint for updates (POST)
+app.post("/updatecustomer", async (req, res) => {
+  try {
+    const payload = req.body;
+    const userId = payload.UserId || payload.userId;
+    if (!userId) {
+      return res.status(400).json({ success: false, message: "userId required" });
+    }
+
+    const updateDoc = { $set: {} };
+    const fields = ["FirstName","LastName","DateOfBirth","Email","Gender","Address","PostalCode","State","Country","Mobile","Password"];
+    fields.forEach(f => {
+      if (payload[f] !== undefined && f !== "Password") {
+        if (f === "DateOfBirth") {
+          updateDoc.$set[f] = payload[f] ? new Date(payload[f]) : null;
+        } else {
+          updateDoc.$set[f] = payload[f];
+        }
+      }
+    });
+
+    if (payload.Password && String(payload.Password).trim() !== "") {
+      if (String(payload.Password).trim().length < 6) {
+        return res.status(400).json({ success:false, message:"New password must be at least 6 characters."});
+      }
+      updateDoc.$set.Password = await bcrypt.hash(String(payload.Password).trim(), 10);
+    }
+
+    const db = await getDb();
+    const filters = [{ UserId: userId }, { userId: userId }];
+    if (/^[0-9a-fA-F]{24}$/.test(userId)) {
+      try { filters.push({ _id: new ObjectId(userId) }); } catch(e){}
+    }
+
+    const result = await db.collection("tblcustomers").findOneAndUpdate(
+      { $or: filters },
+      updateDoc,
+      { returnDocument: "after", projection: { Password: 0 } }
+    );
+
+    if (!result.value) {
+      return res.status(404).json({ success:false, message: "User not found" });
+    }
+
+    return res.json({ success:true, message:"Profile updated (fallback)", customer: result.value });
+  } catch(err) {
+    console.error("POST /updatecustomer error:", err);
+    return res.status(500).json({ success:false, message:"Update failed" });
   }
 });
 
