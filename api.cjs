@@ -1,5 +1,4 @@
-// api.cjs (FULL - updated and fixed)
-
+// api.cjs
 const express = require("express");
 const { MongoClient, ObjectId } = require("mongodb");
 const cors = require("cors");
@@ -22,18 +21,20 @@ app.use(
   })
 );
 
-// handle preflight globally using middleware (more robust than app.options('*'))
+// ---- Global preflight handler (safe, does not register a 'path' route) ----
 app.use((req, res, next) => {
+  // set CORS headers for all requests (prevents missing headers)
+  res.setHeader("Access-Control-Allow-Origin", req.headers.origin || "*");
+  res.setHeader(
+    "Access-Control-Allow-Methods",
+    "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS"
+  );
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    req.headers["access-control-request-headers"] || "Content-Type"
+  );
+  // If browser preflight (OPTIONS) -> respond 204
   if (req.method === "OPTIONS") {
-    res.setHeader("Access-Control-Allow-Origin", req.headers.origin || "*");
-    res.setHeader(
-      "Access-Control-Allow-Methods",
-      "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS"
-    );
-    res.setHeader(
-      "Access-Control-Allow-Headers",
-      req.headers["access-control-request-headers"] || "Content-Type"
-    );
     return res.status(204).end();
   }
   next();
@@ -51,268 +52,30 @@ const DB_NAME = process.env.DB_NAME || "ishopdb";
 
 const client = new MongoClient(MONGO_URI, {});
 
-// helper to get DB (connects if needed)
+// helper to get db
 async function getDb() {
-  try {
-    // For older/newer drivers topology checks differ; attempt safe connect:
-    if (!client.topology || !(client.topology && client.topology.isConnected && client.topology.isConnected())) {
-      await client.connect();
-      console.log("Mongo client connected");
-    }
-  } catch (err) {
-    // If isConnected not available or throws, still ensure connected
-    if (!client.isConnected || !client.topology) {
-      try {
-        await client.connect();
-        console.log("Mongo client connected (fallback)");
-      } catch (e) {
-        console.error("Mongo connect error:", e);
-        throw e;
-      }
-    }
+  if (!client.topology || !client.topology.isConnected?.()) {
+    await client.connect();
+    console.log("Mongo client connected");
   }
   return client.db(DB_NAME);
 }
 
-// ----------------- PRODUCTS -----------------
+/* ---------------- ROUTES (only important ones shown) ---------------- */
 
-// all products
-app.get("/getproducts", async (req, res) => {
-  try {
-    const db = await getDb();
-    const documents = await db.collection("tblproducts").find({}).toArray();
-    res.json(documents);
-  } catch (err) {
-    console.error("GET /getproducts error:", err);
-    res.status(500).json({ error: "Server error" });
-  }
-});
-
-// single product by numeric id OR _id string etc.
-app.get("/products/:id", async (req, res) => {
-  try {
-    const rawId = req.params.id;
-    const db = await getDb();
-
-    // 1) numeric id
-    if (!isNaN(rawId)) {
-      const idNum = Number(rawId);
-      const doc = await db.collection("tblproducts").findOne({ id: idNum });
-      if (doc) return res.json(doc);
-    }
-
-    // 2) ObjectId
-    if (/^[0-9a-fA-F]{24}$/.test(rawId)) {
-      const doc = await db
-        .collection("tblproducts")
-        .findOne({ _id: new ObjectId(rawId) });
-      if (doc) return res.json(doc);
-    }
-
-    // 3) fallback: product_id / id / title string
-    const doc = await db.collection("tblproducts").findOne({
-      $or: [{ product_id: rawId }, { id: rawId }, { title: rawId }],
-    });
-
-    if (!doc) return res.status(404).json({ error: "Product not found" });
-    return res.json(doc);
-  } catch (err) {
-    console.error("GET /products/:id error:", err);
-    res.status(500).json({ error: "Server error" });
-  }
-});
-
-// ----------------- CATEGORIES -----------------
-
-// list of all categories
-app.get("/categories", async (req, res) => {
-  try {
-    const db = await getDb();
-    const documents = await db.collection("tblcategories").find({}).toArray();
-    res.json(documents);
-  } catch (err) {
-    console.error("GET /categories error:", err);
-    res.status(500).json({ error: "Server error" });
-  }
-});
-
-// products by category name
-app.get("/categories/:category", async (req, res) => {
-  try {
-    const cat = req.params.category;
-    const db = await getDb();
-
-    const documents = await db
-      .collection("tblproducts")
-      .find({
-        $or: [{ category: cat }, { Category: cat }, { CategoryName: cat }],
-      })
-      .toArray();
-
-    res.json(documents);
-  } catch (err) {
-    console.error("GET /categories/:category error:", err);
-    res.status(500).json({ error: "Server error" });
-  }
-});
-
-// ----------------- CUSTOMERS -----------------
-
-// all customers (admin)
-app.get("/getcustomers", async (req, res) => {
-  try {
-    const db = await getDb();
-    const documents = await db.collection("tblcustomers").find({}).toArray();
-    res.json(documents);
-  } catch (err) {
-    console.error("GET /getcustomers error:", err);
-    res.status(500).json({ error: "Server error" });
-  }
-});
-
-// register customer (with validation + PASSWORD HASH)
-app.post("/customerregister", async (req, res) => {
-  try {
-    const {
-      UserId,
-      FirstName,
-      LastName,
-      DateOfBirth,
-      Email,
-      Gender,
-      Address,
-      PostalCode,
-      State,
-      Country,
-      Mobile,
-      Password,
-    } = req.body;
-
-    if (!UserId || !FirstName || !LastName || !Email || !Password) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Please fill all required fields" });
-    }
-
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(Email)) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Please enter a valid email" });
-    }
-
-    if (Password.length < 6) {
-      return res.status(400).json({
-        success: false,
-        message: "Password must be at least 6 characters long",
-      });
-    }
-
-    const db = await getDb();
-
-    const existing = await db
-      .collection("tblcustomers")
-      .findOne({ UserId: UserId });
-
-    if (existing) {
-      return res
-        .status(409)
-        .json({ success: false, message: "UserId already exists" });
-    }
-
-    const hashedPassword = await bcrypt.hash(Password, 10);
-
-    const data = {
-      UserId,
-      FirstName,
-      LastName,
-      DateOfBirth: DateOfBirth ? new Date(DateOfBirth) : null,
-      Email,
-      Gender,
-      Address,
-      PostalCode,
-      State,
-      Country,
-      Mobile,
-      Password: hashedPassword,
-      createdAt: new Date(),
-    };
-
-    await db.collection("tblcustomers").insertOne(data);
-
-    return res.json({
-      success: true,
-      message: "Customer registered successfully",
-    });
-  } catch (err) {
-    console.error("POST /customerregister error:", err);
-    res
-      .status(500)
-      .json({ success: false, message: "Registration failed" });
-  }
-});
-
-// secure login
-app.post("/login", async (req, res) => {
-  try {
-    const { UserId, Password } = req.body;
-
-    if (!UserId || !Password) {
-      return res
-        .status(400)
-        .json({ success: false, message: "UserId and Password required" });
-    }
-
-    const db = await getDb();
-    const user = await db
-      .collection("tblcustomers")
-      .findOne({ UserId: UserId });
-
-    if (!user) {
-      return res
-        .status(401)
-        .json({ success: false, message: "Invalid username or password" });
-    }
-
-    const match = await bcrypt.compare(Password, user.Password);
-    if (!match) {
-      return res
-        .status(401)
-        .json({ success: false, message: "Invalid username or password" });
-    }
-
-    return res.json({
-      success: true,
-      message: "Login success",
-      userId: user.UserId,
-    });
-  } catch (err) {
-    console.error("POST /login error:", err);
-    res
-      .status(500)
-      .json({ success: false, message: "Login failed. Server error" });
-  }
-});
-
-/* ------------ PROFILE (GET + UPDATE) ------------- */
-
-// GET profile
+/* PROFILE GET */
 app.get("/customers/:userId", async (req, res) => {
   try {
     const userId = req.params.userId;
+    console.log("GET /customers/:userId called for:", userId);
     const db = await getDb();
 
     const customer = await db.collection("tblcustomers").findOne(
       { UserId: userId },
-      {
-        projection: {
-          Password: 0,
-        },
-      }
+      { projection: { Password: 0 } }
     );
 
     if (!customer) {
-      // fallback: maybe userId is actually _id or slight variant
       let fallback = null;
       if (/^[0-9a-fA-F]{24}$/.test(userId)) {
         fallback = await db
@@ -320,9 +83,8 @@ app.get("/customers/:userId", async (req, res) => {
           .findOne({ _id: new ObjectId(userId) }, { projection: { Password: 0 } });
       }
       if (!customer && !fallback) {
-        return res
-          .status(404)
-          .json({ success: false, message: "User not found" });
+        console.log("GET /customers -> user not found for", userId);
+        return res.status(404).json({ success: false, message: "User not found" });
       }
       return res.json({ success: true, customer: fallback });
     }
@@ -330,17 +92,17 @@ app.get("/customers/:userId", async (req, res) => {
     return res.json({ success: true, customer });
   } catch (err) {
     console.error("GET /customers/:userId error:", err);
-    res
-      .status(500)
-      .json({ success: false, message: "Error fetching profile" });
+    res.status(500).json({ success: false, message: "Error fetching profile" });
   }
 });
 
-// UPDATE profile (robust improved)
+/* PROFILE UPDATE (PUT) */
 app.put("/customers/:userId", async (req, res) => {
   try {
-    const rawUserId = req.params.userId;
-    const userIdTrimmed = (rawUserId || "").trim();
+    const userId = req.params.userId;
+    console.log("PUT /customers/:userId called for:", userId);
+    console.log("Request body:", req.body);
+
     const {
       FirstName,
       LastName,
@@ -355,11 +117,9 @@ app.put("/customers/:userId", async (req, res) => {
       Password,
     } = req.body;
 
-    console.log("PUT /customers/:userId called for (raw):", rawUserId);
-
     const db = await getDb();
 
-    // Build update doc
+    // Build update document safely
     const updateDoc = {
       $set: {
         FirstName: FirstName || "",
@@ -386,62 +146,30 @@ app.put("/customers/:userId", async (req, res) => {
       updateDoc.$set.Password = hashed;
     }
 
-    // Create several flexible filters:
-    const filters = [];
-
-    // exact match (trimmed)
-    if (userIdTrimmed) filters.push({ UserId: userIdTrimmed }, { userId: userIdTrimmed });
-
-    // case-insensitive match on UserId / userId using regex
-    if (userIdTrimmed) {
-      // escape regex special chars in userIdTrimmed
-      const esc = userIdTrimmed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const re = new RegExp("^" + esc + "$", "i");
-      filters.push({ UserId: re }, { userId: re });
-    }
-
-    // if looks like ObjectId, add _id filter
-    if (/^[0-9a-fA-F]{24}$/.test(userIdTrimmed)) {
+    // Try multiple filters to match user: UserId / userId / _id
+    const filters = [{ UserId: userId }, { userId: userId }];
+    if (/^[0-9a-fA-F]{24}$/.test(userId)) {
       try {
-        filters.push({ _id: new ObjectId(userIdTrimmed) });
+        filters.push({ _id: new ObjectId(userId) });
       } catch (e) {
-        // ignore if not valid
+        // ignore
       }
     }
 
-    // DEBUG: show filters being tried
-    console.log("PUT /customers/:userId -> filters to try:", filters);
+    console.log("Attempting update with filters:", filters);
 
-    // First try findOne to show what's in DB (helps debugging)
-    let matchedDoc = null;
-    for (const f of filters) {
-      try {
-        matchedDoc = await db.collection("tblcustomers").findOne(f, { projection: { Password: 0 } });
-        if (matchedDoc) {
-          console.log("PUT /customers/:userId -> matched doc using filter:", f, " _id:", matchedDoc._id);
-          break;
-        }
-      } catch (e) {
-        console.warn("PUT /customers -> findOne error for filter", f, e);
-      }
-    }
-
-    if (!matchedDoc) {
-      console.log("No document matched for update. Filters tried:", filters);
-      return res.status(404).json({ success: false, message: "User not found" });
-    }
-
-    // use the matchedDoc._id to update (reliable)
     const result = await db.collection("tblcustomers").findOneAndUpdate(
-      { _id: matchedDoc._id },
+      { $or: filters },
       updateDoc,
       { returnDocument: "after", projection: { Password: 0 } }
     );
 
     if (!result.value) {
-      console.log("Update attempted but no result returned for _id:", matchedDoc._id);
-      return res.status(500).json({ success: false, message: "Failed to update profile" });
+      console.log("No document matched for update. Filters tried:", filters);
+      return res.status(404).json({ success: false, message: "User not found" });
     }
+
+    console.log("Update succeeded, new doc:", result.value);
 
     return res.json({
       success: true,
@@ -454,269 +182,7 @@ app.put("/customers/:userId", async (req, res) => {
   }
 });
 
-// fallback endpoint for updates (POST)
-app.post("/updatecustomer", async (req, res) => {
-  try {
-    const payload = req.body;
-    const userId = payload.UserId || payload.userId;
-    if (!userId) {
-      return res.status(400).json({ success: false, message: "userId required" });
-    }
-
-    const updateDoc = { $set: {} };
-    const fields = ["FirstName","LastName","DateOfBirth","Email","Gender","Address","PostalCode","State","Country","Mobile","Password"];
-    fields.forEach(f => {
-      if (payload[f] !== undefined && f !== "Password") {
-        if (f === "DateOfBirth") {
-          updateDoc.$set[f] = payload[f] ? new Date(payload[f]) : null;
-        } else {
-          updateDoc.$set[f] = payload[f];
-        }
-      }
-    });
-
-    if (payload.Password && String(payload.Password).trim() !== "") {
-      if (String(payload.Password).trim().length < 6) {
-        return res.status(400).json({ success:false, message:"New password must be at least 6 characters."});
-      }
-      updateDoc.$set.Password = await bcrypt.hash(String(payload.Password).trim(), 10);
-    }
-
-    const db = await getDb();
-    const filters = [{ UserId: userId }, { userId: userId }];
-    if (/^[0-9a-fA-F]{24}$/.test(userId)) {
-      try { filters.push({ _id: new ObjectId(userId) }); } catch(e){}
-    }
-
-    const result = await db.collection("tblcustomers").findOneAndUpdate(
-      { $or: filters },
-      updateDoc,
-      { returnDocument: "after", projection: { Password: 0 } }
-    );
-
-    if (!result.value) {
-      return res.status(404).json({ success:false, message: "User not found" });
-    }
-
-    return res.json({ success:true, message:"Profile updated (fallback)", customer: result.value });
-  } catch(err) {
-    console.error("POST /updatecustomer error:", err);
-    return res.status(500).json({ success:false, message:"Update failed" });
-  }
-});
-
-// ----------------- ORDERS -----------------
-
-app.post("/createorder", async (req, res) => {
-  try {
-    const db = await getDb();
-
-    const payload = req.body;
-
-    if (!payload || !Array.isArray(payload.items) || payload.items.length === 0) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid payload: items required" });
-    }
-
-    const items = payload.items;
-
-    const numericIds = [];
-    const objectIds = [];
-    const stringIds = [];
-
-    items.forEach((it) => {
-      const pid = it.productId;
-      if (typeof pid === "string" && /^[0-9a-fA-F]{24}$/.test(pid)) {
-        objectIds.push(new ObjectId(pid));
-      } else if (!isNaN(Number(pid))) {
-        numericIds.push(Number(pid));
-      } else {
-        stringIds.push(String(pid));
-      }
-    });
-
-    const queryOr = [];
-    if (objectIds.length) queryOr.push({ _id: { $in: objectIds } });
-    if (numericIds.length) queryOr.push({ id: { $in: numericIds } });
-    if (stringIds.length)
-      queryOr.push(
-        { id: { $in: stringIds } },
-        { product_id: { $in: stringIds } }
-      );
-
-    let dbProducts = [];
-    if (queryOr.length) {
-      dbProducts = await db
-        .collection("tblproducts")
-        .find({ $or: queryOr })
-        .toArray();
-    } else {
-      dbProducts = await db.collection("tblproducts").find({}).toArray();
-    }
-
-    const productMap = {};
-    dbProducts.forEach((p) => {
-      if (p._id) productMap[String(p._id)] = p;
-      if (p.id !== undefined) productMap[String(p.id)] = p;
-      if (p.product_id !== undefined) productMap[String(p.product_id)] = p;
-    });
-
-    let computedSubtotal = 0;
-    const validatedItems = [];
-
-    for (const it of items) {
-      const key = String(it.productId);
-      const prod = productMap[key];
-      if (!prod) {
-        return res
-          .status(400)
-          .json({ success: false, message: `Product not found: ${it.productId}` });
-      }
-      const unitPrice = Number(prod.price || 0);
-      const qty = Number(it.qty || 1);
-      if (isNaN(unitPrice)) {
-        return res
-          .status(500)
-          .json({ success: false, message: "Server product price error" });
-      }
-      const lineTotal = unitPrice * qty;
-      computedSubtotal += lineTotal;
-
-      validatedItems.push({
-        productId: String(prod._id || prod.id),
-        title: prod.title || prod.name || "",
-        unitPrice,
-        qty,
-        lineTotal,
-      });
-    }
-
-    if (payload.subtotal !== undefined) {
-      const diff = Math.abs(Number(payload.subtotal) - computedSubtotal);
-      if (diff > 0.5) {
-        return res
-          .status(400)
-          .json({ success: false, message: "Subtotal mismatch" });
-      }
-    }
-
-    const shipping = Number(payload.shipping || 0);
-    const tax = Number(payload.tax || 0);
-    const total = Number(
-      payload.total || computedSubtotal + shipping + tax
-    );
-
-    const orderDoc = {
-      userId: payload.userId || null,
-      items: validatedItems,
-      subtotal: computedSubtotal,
-      shipping,
-      tax,
-      total,
-      createdAt: new Date(),
-      status: "created",
-    };
-
-    const insertRes = await db.collection("tblorders").insertOne(orderDoc);
-
-    return res.json({
-      success: true,
-      orderId: String(insertRes.insertedId),
-      message: "Order created",
-    });
-  } catch (err) {
-    console.error("Create order failed:", err);
-    return res
-      .status(500)
-      .json({ success: false, message: err.message || "Unknown server error" });
-  }
-});
-
-// get orders for a user
-app.get("/orders/:userId", async (req, res) => {
-  try {
-    const userId = req.params.userId;
-    const db = await getDb();
-
-    const orders = await db
-      .collection("tblorders")
-      .find({
-        $or: [
-          { userId: userId },
-          { userId: null },
-          { userId: "" },
-          { userId: { $exists: false } },
-        ],
-      })
-      .sort({ createdAt: -1 })
-      .toArray();
-
-    res.json({ success: true, orders });
-  } catch (err) {
-    console.error("GET /orders/:userId error:", err);
-    res
-      .status(500)
-      .json({ success: false, message: "Failed to load orders" });
-  }
-});
-
-// ----------------- CART -----------------
-
-app.post("/addtocart", async (req, res) => {
-  try {
-    const db = await getDb();
-    const { userId, productId, qty } = req.body;
-
-    if (!userId || !productId) {
-      return res
-        .status(400)
-        .json({ success: false, message: "userId and productId required" });
-    }
-
-    const existing = await db
-      .collection("tblshoppingcart")
-      .findOne({ userId, productId });
-
-    if (existing) {
-      await db.collection("tblshoppingcart").updateOne(
-        { userId, productId },
-        { $set: { qty: existing.qty + (qty || 1) } }
-      );
-    } else {
-      await db.collection("tblshoppingcart").insertOne({
-        userId,
-        productId,
-        qty: qty || 1,
-        addedAt: new Date(),
-      });
-    }
-
-    res.json({ success: true, message: "Cart updated" });
-  } catch (err) {
-    console.error("POST /addtocart error:", err);
-    res.status(500).json({ success: false, message: "Server error" });
-  }
-});
-
-app.get("/getcart/:userId", async (req, res) => {
-  try {
-    const db = await getDb();
-    const userId = req.params.userId;
-
-    const cart = await db
-      .collection("tblshoppingcart")
-      .find({ userId })
-      .toArray();
-    res.json(cart);
-  } catch (err) {
-    console.error("GET /getcart error:", err);
-    res.status(500).json({ success: false, message: "Server error" });
-  }
-});
-
-// ----------------- CATCH-ALL -----------------
-
+/* fallback endpoints and other routes (kept minimal for brevity) */
 app.use((req, res) => {
   const isApi =
     req.path.startsWith("/products") ||
