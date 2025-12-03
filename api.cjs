@@ -1,4 +1,5 @@
-// api.cjs
+// api.cjs (FULL - updated and fixed)
+
 const express = require("express");
 const { MongoClient, ObjectId } = require("mongodb");
 const cors = require("cors");
@@ -21,21 +22,19 @@ app.use(
   })
 );
 
-// Safe global preflight + CORS headers (avoid path-to-regexp wildcard issues)
+// handle preflight globally using middleware (more robust than app.options('*'))
 app.use((req, res, next) => {
-  res.setHeader("Access-Control-Allow-Origin", req.headers.origin || "*");
-  res.setHeader(
-    "Access-Control-Allow-Methods",
-    "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS"
-  );
-  res.setHeader(
-    "Access-Control-Allow-Headers",
-    req.headers["access-control-request-headers"] || "Content-Type"
-  );
-  res.setHeader("Access-Control-Allow-Credentials", "true");
-
-  if (req.method && req.method.toUpperCase() === "OPTIONS") {
-    return res.sendStatus(204);
+  if (req.method === "OPTIONS") {
+    res.setHeader("Access-Control-Allow-Origin", req.headers.origin || "*");
+    res.setHeader(
+      "Access-Control-Allow-Methods",
+      "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS"
+    );
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      req.headers["access-control-request-headers"] || "Content-Type"
+    );
+    return res.status(204).end();
   }
   next();
 });
@@ -52,17 +51,25 @@ const DB_NAME = process.env.DB_NAME || "ishopdb";
 
 const client = new MongoClient(MONGO_URI, {});
 
+// helper to get DB (connects if needed)
 async function getDb() {
-  // connect if not connected
   try {
-    if (!client.topology || !client.topology.isConnected?.()) {
+    // For older/newer drivers topology checks differ; attempt safe connect:
+    if (!client.topology || !(client.topology && client.topology.isConnected && client.topology.isConnected())) {
       await client.connect();
       console.log("Mongo client connected");
     }
   } catch (err) {
-    // fallback: try connecting once more (catch edge cases)
-    await client.connect();
-    console.log("Mongo client connected (fallback)");
+    // If isConnected not available or throws, still ensure connected
+    if (!client.isConnected || !client.topology) {
+      try {
+        await client.connect();
+        console.log("Mongo client connected (fallback)");
+      } catch (e) {
+        console.error("Mongo connect error:", e);
+        throw e;
+      }
+    }
   }
   return client.db(DB_NAME);
 }
@@ -305,7 +312,7 @@ app.get("/customers/:userId", async (req, res) => {
     );
 
     if (!customer) {
-      // fallback: maybe userId is actually _id or userId in other case
+      // fallback: maybe userId is actually _id or slight variant
       let fallback = null;
       if (/^[0-9a-fA-F]{24}$/.test(userId)) {
         fallback = await db
@@ -329,10 +336,11 @@ app.get("/customers/:userId", async (req, res) => {
   }
 });
 
-// UPDATE profile (robust)
+// UPDATE profile (robust improved)
 app.put("/customers/:userId", async (req, res) => {
   try {
-    const userId = req.params.userId;
+    const rawUserId = req.params.userId;
+    const userIdTrimmed = (rawUserId || "").trim();
     const {
       FirstName,
       LastName,
@@ -347,11 +355,11 @@ app.put("/customers/:userId", async (req, res) => {
       Password,
     } = req.body;
 
-    console.log("PUT /customers/:userId called for:", userId);
+    console.log("PUT /customers/:userId called for (raw):", rawUserId);
 
     const db = await getDb();
 
-    // build updateDoc
+    // Build update doc
     const updateDoc = {
       $set: {
         FirstName: FirstName || "",
@@ -378,27 +386,61 @@ app.put("/customers/:userId", async (req, res) => {
       updateDoc.$set.Password = hashed;
     }
 
-    // try multiple filters to match user: UserId / userId / _id
-    const filters = [{ UserId: userId }, { userId: userId }];
-    if (/^[0-9a-fA-F]{24}$/.test(userId)) {
+    // Create several flexible filters:
+    const filters = [];
+
+    // exact match (trimmed)
+    if (userIdTrimmed) filters.push({ UserId: userIdTrimmed }, { userId: userIdTrimmed });
+
+    // case-insensitive match on UserId / userId using regex
+    if (userIdTrimmed) {
+      // escape regex special chars in userIdTrimmed
+      const esc = userIdTrimmed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const re = new RegExp("^" + esc + "$", "i");
+      filters.push({ UserId: re }, { userId: re });
+    }
+
+    // if looks like ObjectId, add _id filter
+    if (/^[0-9a-fA-F]{24}$/.test(userIdTrimmed)) {
       try {
-        filters.push({ _id: new ObjectId(userId) });
+        filters.push({ _id: new ObjectId(userIdTrimmed) });
       } catch (e) {
-        // ignore
+        // ignore if not valid
       }
     }
 
-    console.log("Attempting update with filters:", filters);
+    // DEBUG: show filters being tried
+    console.log("PUT /customers/:userId -> filters to try:", filters);
 
+    // First try findOne to show what's in DB (helps debugging)
+    let matchedDoc = null;
+    for (const f of filters) {
+      try {
+        matchedDoc = await db.collection("tblcustomers").findOne(f, { projection: { Password: 0 } });
+        if (matchedDoc) {
+          console.log("PUT /customers/:userId -> matched doc using filter:", f, " _id:", matchedDoc._id);
+          break;
+        }
+      } catch (e) {
+        console.warn("PUT /customers -> findOne error for filter", f, e);
+      }
+    }
+
+    if (!matchedDoc) {
+      console.log("No document matched for update. Filters tried:", filters);
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    // use the matchedDoc._id to update (reliable)
     const result = await db.collection("tblcustomers").findOneAndUpdate(
-      { $or: filters },
+      { _id: matchedDoc._id },
       updateDoc,
       { returnDocument: "after", projection: { Password: 0 } }
     );
 
     if (!result.value) {
-      console.log("No document matched for update. Filters tried:", filters);
-      return res.status(404).json({ success: false, message: "User not found" });
+      console.log("Update attempted but no result returned for _id:", matchedDoc._id);
+      return res.status(500).json({ success: false, message: "Failed to update profile" });
     }
 
     return res.json({
