@@ -21,8 +21,8 @@ app.use(
   })
 );
 
-// handle preflight globally
-app.options("*", (req, res) => {
+// Safe global preflight + CORS headers (avoid path-to-regexp wildcard issues)
+app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", req.headers.origin || "*");
   res.setHeader(
     "Access-Control-Allow-Methods",
@@ -32,7 +32,12 @@ app.options("*", (req, res) => {
     "Access-Control-Allow-Headers",
     req.headers["access-control-request-headers"] || "Content-Type"
   );
-  return res.status(204).end();
+  res.setHeader("Access-Control-Allow-Credentials", "true");
+
+  if (req.method && req.method.toUpperCase() === "OPTIONS") {
+    return res.sendStatus(204);
+  }
+  next();
 });
 
 // static files for backend (optional)
@@ -49,9 +54,15 @@ const client = new MongoClient(MONGO_URI, {});
 
 async function getDb() {
   // connect if not connected
-  if (!client.topology || !client.topology.isConnected?.()) {
+  try {
+    if (!client.topology || !client.topology.isConnected?.()) {
+      await client.connect();
+      console.log("Mongo client connected");
+    }
+  } catch (err) {
+    // fallback: try connecting once more (catch edge cases)
     await client.connect();
-    console.log("Mongo client connected");
+    console.log("Mongo client connected (fallback)");
   }
   return client.db(DB_NAME);
 }
@@ -295,7 +306,6 @@ app.get("/customers/:userId", async (req, res) => {
 
     if (!customer) {
       // fallback: maybe userId is actually _id or userId in other case
-      // try other keys quickly
       let fallback = null;
       if (/^[0-9a-fA-F]{24}$/.test(userId)) {
         fallback = await db
