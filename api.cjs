@@ -1,3 +1,4 @@
+// api.cjs
 const express = require("express");
 const { MongoClient, ObjectId } = require("mongodb");
 const cors = require("cors");
@@ -7,39 +8,66 @@ require("dotenv").config();
 
 const app = express();
 
-/* =========================
- *  MIDDLEWARE
- * ======================= */
+// ----------------- MIDDLEWARE -----------------
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
-app.use(cors());
 
-// backend static files (public folder)
+// CORS: allow frontend origins (loose by default)
+app.use(
+  cors({
+    origin: true,
+    credentials: true,
+    methods: "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS",
+  })
+);
+
+// Safe global preflight + CORS headers (avoid path-to-regexp wildcard issues)
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", req.headers.origin || "*");
+  res.setHeader(
+    "Access-Control-Allow-Methods",
+    "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS"
+  );
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    req.headers["access-control-request-headers"] || "Content-Type"
+  );
+  res.setHeader("Access-Control-Allow-Credentials", "true");
+
+  if (req.method && req.method.toUpperCase() === "OPTIONS") {
+    return res.sendStatus(204);
+  }
+  next();
+});
+
+// static files for backend (optional)
 app.use(express.static(path.join(__dirname, "public")));
 
-/* =========================
- *  MONGO CONFIG
- * ======================= */
-
+// ----------------- MONGO CONFIG -----------------
 const MONGO_URI =
   process.env.MONGO_URI ||
   "mongodb+srv://ragini_user:Ragini%402728@cluster0.nq1itcw.mongodb.net/ishopdb?retryWrites=true&w=majority&appName=Cluster0";
 
 const DB_NAME = process.env.DB_NAME || "ishopdb";
 
-const client = new MongoClient(MONGO_URI);
+const client = new MongoClient(MONGO_URI, {});
 
 async function getDb() {
-  if (!client.topology || !client.topology.isConnected?.()) {
+  // connect if not connected
+  try {
+    if (!client.topology || !client.topology.isConnected?.()) {
+      await client.connect();
+      console.log("Mongo client connected");
+    }
+  } catch (err) {
+    // fallback: try connecting once more (catch edge cases)
     await client.connect();
-    console.log("Mongo client connected");
+    console.log("Mongo client connected (fallback)");
   }
   return client.db(DB_NAME);
 }
 
-/* =========================
- *  PRODUCTS
- * ======================= */
+// ----------------- PRODUCTS -----------------
 
 // all products
 app.get("/getproducts", async (req, res) => {
@@ -87,9 +115,7 @@ app.get("/products/:id", async (req, res) => {
   }
 });
 
-/* =========================
- *  CATEGORIES
- * ======================= */
+// ----------------- CATEGORIES -----------------
 
 // list of all categories
 app.get("/categories", async (req, res) => {
@@ -106,7 +132,7 @@ app.get("/categories", async (req, res) => {
 // products by category name
 app.get("/categories/:category", async (req, res) => {
   try {
-    const cat = req.params.category; // e.g. "Men's Fashion"
+    const cat = req.params.category;
     const db = await getDb();
 
     const documents = await db
@@ -123,11 +149,9 @@ app.get("/categories/:category", async (req, res) => {
   }
 });
 
-/* =========================
- *  CUSTOMERS (REGISTER / LOGIN)
- * ======================= */
+// ----------------- CUSTOMERS -----------------
 
-// all customers (admin use)
+// all customers (admin)
 app.get("/getcustomers", async (req, res) => {
   try {
     const db = await getDb();
@@ -139,7 +163,7 @@ app.get("/getcustomers", async (req, res) => {
   }
 });
 
-// register customer
+// register customer (with validation + PASSWORD HASH)
 app.post("/customerregister", async (req, res) => {
   try {
     const {
@@ -263,11 +287,9 @@ app.post("/login", async (req, res) => {
   }
 });
 
-/* =========================
- *  PROFILE (GET + UPDATE)
- * ======================= */
+/* ------------ PROFILE (GET + UPDATE) ------------- */
 
-// GET /customers/:userId -> profile data
+// GET profile
 app.get("/customers/:userId", async (req, res) => {
   try {
     const userId = req.params.userId;
@@ -277,15 +299,25 @@ app.get("/customers/:userId", async (req, res) => {
       { UserId: userId },
       {
         projection: {
-          Password: 0, // don't send password
+          Password: 0,
         },
       }
     );
 
     if (!customer) {
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found" });
+      // fallback: maybe userId is actually _id or userId in other case
+      let fallback = null;
+      if (/^[0-9a-fA-F]{24}$/.test(userId)) {
+        fallback = await db
+          .collection("tblcustomers")
+          .findOne({ _id: new ObjectId(userId) }, { projection: { Password: 0 } });
+      }
+      if (!customer && !fallback) {
+        return res
+          .status(404)
+          .json({ success: false, message: "User not found" });
+      }
+      return res.json({ success: true, customer: fallback });
     }
 
     return res.json({ success: true, customer });
@@ -297,7 +329,7 @@ app.get("/customers/:userId", async (req, res) => {
   }
 });
 
-// PUT /customers/:userId -> profile update
+// UPDATE profile (robust)
 app.put("/customers/:userId", async (req, res) => {
   try {
     const userId = req.params.userId;
@@ -312,11 +344,14 @@ app.put("/customers/:userId", async (req, res) => {
       State,
       Country,
       Mobile,
-      Password, // optional new password
+      Password,
     } = req.body;
+
+    console.log("PUT /customers/:userId called for:", userId);
 
     const db = await getDb();
 
+    // build updateDoc
     const updateDoc = {
       $set: {
         FirstName: FirstName || "",
@@ -332,7 +367,6 @@ app.put("/customers/:userId", async (req, res) => {
       },
     };
 
-    // If password provided → validate & hash
     if (Password && String(Password).trim() !== "") {
       if (String(Password).trim().length < 6) {
         return res.status(400).json({
@@ -344,17 +378,27 @@ app.put("/customers/:userId", async (req, res) => {
       updateDoc.$set.Password = hashed;
     }
 
-    const result = await db
-      .collection("tblcustomers")
-      .findOneAndUpdate({ UserId: userId }, updateDoc, {
-        returnDocument: "after",
-        projection: { Password: 0 },
-      });
+    // try multiple filters to match user: UserId / userId / _id
+    const filters = [{ UserId: userId }, { userId: userId }];
+    if (/^[0-9a-fA-F]{24}$/.test(userId)) {
+      try {
+        filters.push({ _id: new ObjectId(userId) });
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    console.log("Attempting update with filters:", filters);
+
+    const result = await db.collection("tblcustomers").findOneAndUpdate(
+      { $or: filters },
+      updateDoc,
+      { returnDocument: "after", projection: { Password: 0 } }
+    );
 
     if (!result.value) {
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found" });
+      console.log("No document matched for update. Filters tried:", filters);
+      return res.status(404).json({ success: false, message: "User not found" });
     }
 
     return res.json({
@@ -364,23 +408,68 @@ app.put("/customers/:userId", async (req, res) => {
     });
   } catch (err) {
     console.error("PUT /customers/:userId error:", err);
-    res
-      .status(500)
-      .json({ success: false, message: "Profile update failed" });
+    return res.status(500).json({ success: false, message: "Profile update failed" });
   }
 });
 
-/* =========================
- *  ORDERS
- * ======================= */
+// fallback endpoint for updates (POST)
+app.post("/updatecustomer", async (req, res) => {
+  try {
+    const payload = req.body;
+    const userId = payload.UserId || payload.userId;
+    if (!userId) {
+      return res.status(400).json({ success: false, message: "userId required" });
+    }
 
-// create order
+    const updateDoc = { $set: {} };
+    const fields = ["FirstName","LastName","DateOfBirth","Email","Gender","Address","PostalCode","State","Country","Mobile","Password"];
+    fields.forEach(f => {
+      if (payload[f] !== undefined && f !== "Password") {
+        if (f === "DateOfBirth") {
+          updateDoc.$set[f] = payload[f] ? new Date(payload[f]) : null;
+        } else {
+          updateDoc.$set[f] = payload[f];
+        }
+      }
+    });
+
+    if (payload.Password && String(payload.Password).trim() !== "") {
+      if (String(payload.Password).trim().length < 6) {
+        return res.status(400).json({ success:false, message:"New password must be at least 6 characters."});
+      }
+      updateDoc.$set.Password = await bcrypt.hash(String(payload.Password).trim(), 10);
+    }
+
+    const db = await getDb();
+    const filters = [{ UserId: userId }, { userId: userId }];
+    if (/^[0-9a-fA-F]{24}$/.test(userId)) {
+      try { filters.push({ _id: new ObjectId(userId) }); } catch(e){}
+    }
+
+    const result = await db.collection("tblcustomers").findOneAndUpdate(
+      { $or: filters },
+      updateDoc,
+      { returnDocument: "after", projection: { Password: 0 } }
+    );
+
+    if (!result.value) {
+      return res.status(404).json({ success:false, message: "User not found" });
+    }
+
+    return res.json({ success:true, message:"Profile updated (fallback)", customer: result.value });
+  } catch(err) {
+    console.error("POST /updatecustomer error:", err);
+    return res.status(500).json({ success:false, message:"Update failed" });
+  }
+});
+
+// ----------------- ORDERS -----------------
+
 app.post("/createorder", async (req, res) => {
   try {
     const db = await getDb();
 
     const payload = req.body;
-    console.log("CreateOrder payload:", JSON.stringify(payload, null, 2));
 
     if (!payload || !Array.isArray(payload.items) || payload.items.length === 0) {
       return res
@@ -438,16 +527,13 @@ app.post("/createorder", async (req, res) => {
       const key = String(it.productId);
       const prod = productMap[key];
       if (!prod) {
-        console.error("Product not found for item:", it);
-        return res.status(400).json({
-          success: false,
-          message: `Product not found: ${it.productId}`,
-        });
+        return res
+          .status(400)
+          .json({ success: false, message: `Product not found: ${it.productId}` });
       }
       const unitPrice = Number(prod.price || 0);
       const qty = Number(it.qty || 1);
       if (isNaN(unitPrice)) {
-        console.error("Invalid price in DB for product", prod);
         return res
           .status(500)
           .json({ success: false, message: "Server product price error" });
@@ -467,12 +553,6 @@ app.post("/createorder", async (req, res) => {
     if (payload.subtotal !== undefined) {
       const diff = Math.abs(Number(payload.subtotal) - computedSubtotal);
       if (diff > 0.5) {
-        console.warn(
-          "Subtotal mismatch: client sent",
-          payload.subtotal,
-          "computed",
-          computedSubtotal
-        );
         return res
           .status(400)
           .json({ success: false, message: "Subtotal mismatch" });
@@ -497,7 +577,6 @@ app.post("/createorder", async (req, res) => {
     };
 
     const insertRes = await db.collection("tblorders").insertOne(orderDoc);
-    console.log("Order inserted:", insertRes.insertedId);
 
     return res.json({
       success: true,
@@ -540,9 +619,7 @@ app.get("/orders/:userId", async (req, res) => {
   }
 });
 
-/* =========================
- *  CART (optional)
- * ======================= */
+// ----------------- CART -----------------
 
 app.post("/addtocart", async (req, res) => {
   try {
@@ -596,9 +673,7 @@ app.get("/getcart/:userId", async (req, res) => {
   }
 });
 
-/* =========================
- *  CATCH-ALL (NO STATIC FRONTEND)
- * ======================= */
+// ----------------- CATCH-ALL -----------------
 
 app.use((req, res) => {
   const isApi =
@@ -623,10 +698,7 @@ app.use((req, res) => {
   });
 });
 
-/* =========================
- *  START SERVER
- * ======================= */
-
+// ----------------- START SERVER -----------------
 const PORT = process.env.PORT || 4400;
 app.listen(PORT, () =>
   console.log(`API Starter http://127.0.0.1:${PORT}`)
