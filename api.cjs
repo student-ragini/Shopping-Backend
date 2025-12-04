@@ -21,8 +21,8 @@ app.use(
   })
 );
 
-// Safe global preflight + CORS headers (avoid path-to-regexp wildcard issues)
-app.use((req, res, next) => {
+// handle preflight globally
+app.options("*", (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", req.headers.origin || "*");
   res.setHeader(
     "Access-Control-Allow-Methods",
@@ -32,12 +32,7 @@ app.use((req, res, next) => {
     "Access-Control-Allow-Headers",
     req.headers["access-control-request-headers"] || "Content-Type"
   );
-  res.setHeader("Access-Control-Allow-Credentials", "true");
-
-  if (req.method && req.method.toUpperCase() === "OPTIONS") {
-    return res.sendStatus(204);
-  }
-  next();
+  return res.status(204).end();
 });
 
 // static files for backend (optional)
@@ -53,23 +48,14 @@ const DB_NAME = process.env.DB_NAME || "ishopdb";
 const client = new MongoClient(MONGO_URI, {});
 
 async function getDb() {
-  // connect if not connected
-  try {
-    if (!client.topology || !client.topology.isConnected?.()) {
-      await client.connect();
-      console.log("Mongo client connected");
-    }
-  } catch (err) {
-    // fallback: try connecting once more (catch edge cases)
+  if (!client.topology || !client.topology.isConnected?.()) {
     await client.connect();
-    console.log("Mongo client connected (fallback)");
+    console.log("Mongo client connected");
   }
   return client.db(DB_NAME);
 }
 
 // ----------------- PRODUCTS -----------------
-
-// all products
 app.get("/getproducts", async (req, res) => {
   try {
     const db = await getDb();
@@ -81,20 +67,17 @@ app.get("/getproducts", async (req, res) => {
   }
 });
 
-// single product by numeric id OR _id string etc.
 app.get("/products/:id", async (req, res) => {
   try {
     const rawId = req.params.id;
     const db = await getDb();
 
-    // 1) numeric id
     if (!isNaN(rawId)) {
       const idNum = Number(rawId);
       const doc = await db.collection("tblproducts").findOne({ id: idNum });
       if (doc) return res.json(doc);
     }
 
-    // 2) ObjectId
     if (/^[0-9a-fA-F]{24}$/.test(rawId)) {
       const doc = await db
         .collection("tblproducts")
@@ -102,7 +85,6 @@ app.get("/products/:id", async (req, res) => {
       if (doc) return res.json(doc);
     }
 
-    // 3) fallback: product_id / id / title string
     const doc = await db.collection("tblproducts").findOne({
       $or: [{ product_id: rawId }, { id: rawId }, { title: rawId }],
     });
@@ -116,8 +98,6 @@ app.get("/products/:id", async (req, res) => {
 });
 
 // ----------------- CATEGORIES -----------------
-
-// list of all categories
 app.get("/categories", async (req, res) => {
   try {
     const db = await getDb();
@@ -129,7 +109,6 @@ app.get("/categories", async (req, res) => {
   }
 });
 
-// products by category name
 app.get("/categories/:category", async (req, res) => {
   try {
     const cat = req.params.category;
@@ -292,7 +271,7 @@ app.post("/login", async (req, res) => {
 // GET profile
 app.get("/customers/:userId", async (req, res) => {
   try {
-    const userId = req.params.userId;
+    const userId = String(req.params.userId || "").trim();
     const db = await getDb();
 
     const customer = await db.collection("tblcustomers").findOne(
@@ -305,7 +284,7 @@ app.get("/customers/:userId", async (req, res) => {
     );
 
     if (!customer) {
-      // fallback: maybe userId is actually _id or userId in other case
+      // try other quick fallbacks
       let fallback = null;
       if (/^[0-9a-fA-F]{24}$/.test(userId)) {
         fallback = await db
@@ -329,10 +308,14 @@ app.get("/customers/:userId", async (req, res) => {
   }
 });
 
-// UPDATE profile (robust)
+// UPDATE profile (robust + tolerant matching)
 app.put("/customers/:userId", async (req, res) => {
   try {
-    const userId = req.params.userId;
+    const userIdRaw = req.params.userId;
+    const userId = String(userIdRaw || "").trim();
+
+    console.log("PUT /customers/:userId called for:", userId, "body:", req.body);
+
     const {
       FirstName,
       LastName,
@@ -346,8 +329,6 @@ app.put("/customers/:userId", async (req, res) => {
       Mobile,
       Password,
     } = req.body;
-
-    console.log("PUT /customers/:userId called for:", userId);
 
     const db = await getDb();
 
@@ -378,14 +359,27 @@ app.put("/customers/:userId", async (req, res) => {
       updateDoc.$set.Password = hashed;
     }
 
-    // try multiple filters to match user: UserId / userId / _id
-    const filters = [{ UserId: userId }, { userId: userId }];
-    if (/^[0-9a-fA-F]{24}$/.test(userId)) {
+    // build tolerant filters: exact, lowercase, spaces/underscores swapped, _id
+    const filters = [];
+
+    const cleaned = userId;
+    const altUnderscore = cleaned.replace(/\s+/g, "_");
+    const altSpace = cleaned.replace(/_+/g, " ");
+    const lower = cleaned.toLowerCase();
+
+    filters.push({ UserId: cleaned });
+    if (altUnderscore !== cleaned) filters.push({ UserId: altUnderscore });
+    if (altSpace !== cleaned) filters.push({ UserId: altSpace });
+    filters.push({ userId: cleaned });
+    filters.push({ userId: altUnderscore });
+    filters.push({ userId: altSpace });
+    filters.push({ UserId: { $regex: `^${cleaned}$`, $options: "i" }});
+    filters.push({ userId: { $regex: `^${cleaned}$`, $options: "i" }});
+
+    if (/^[0-9a-fA-F]{24}$/.test(cleaned)) {
       try {
-        filters.push({ _id: new ObjectId(userId) });
-      } catch (e) {
-        // ignore
-      }
+        filters.push({ _id: new ObjectId(cleaned) });
+      } catch (e) {}
     }
 
     console.log("Attempting update with filters:", filters);
@@ -464,7 +458,6 @@ app.post("/updatecustomer", async (req, res) => {
 });
 
 // ----------------- ORDERS -----------------
-
 app.post("/createorder", async (req, res) => {
   try {
     const db = await getDb();
@@ -591,7 +584,6 @@ app.post("/createorder", async (req, res) => {
   }
 });
 
-// get orders for a user
 app.get("/orders/:userId", async (req, res) => {
   try {
     const userId = req.params.userId;
@@ -620,7 +612,6 @@ app.get("/orders/:userId", async (req, res) => {
 });
 
 // ----------------- CART -----------------
-
 app.post("/addtocart", async (req, res) => {
   try {
     const db = await getDb();
@@ -674,7 +665,6 @@ app.get("/getcart/:userId", async (req, res) => {
 });
 
 // ----------------- CATCH-ALL -----------------
-
 app.use((req, res) => {
   const isApi =
     req.path.startsWith("/products") ||
