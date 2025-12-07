@@ -8,11 +8,14 @@ require("dotenv").config();
 
 const app = express();
 
-// ----------------- MIDDLEWARE -----------------
+/* =========================
+ *   MIDDLEWARE
+ * ======================= */
+
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
-// CORS: allow frontend origins (loose by default)
+// CORS – frontend ko allow
 app.use(
   cors({
     origin: true,
@@ -21,7 +24,7 @@ app.use(
   })
 );
 
-// handle preflight globally
+// Preflight (OPTIONS)
 app.options("*", (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", req.headers.origin || "*");
   res.setHeader(
@@ -35,10 +38,13 @@ app.options("*", (req, res) => {
   return res.status(204).end();
 });
 
-// static files for backend (optional)
+// static files (agar kabhi chahiye)
 app.use(express.static(path.join(__dirname, "public")));
 
-// ----------------- MONGO CONFIG -----------------
+/* =========================
+ *   MONGO CONFIG
+ * ======================= */
+
 const MONGO_URI =
   process.env.MONGO_URI ||
   "mongodb+srv://ragini_user:Ragini%402728@cluster0.nq1itcw.mongodb.net/ishopdb?retryWrites=true&w=majority&appName=Cluster0";
@@ -55,7 +61,11 @@ async function getDb() {
   return client.db(DB_NAME);
 }
 
-// ----------------- PRODUCTS -----------------
+/* =========================
+ *   PRODUCTS
+ * ======================= */
+
+// all products
 app.get("/getproducts", async (req, res) => {
   try {
     const db = await getDb();
@@ -67,17 +77,20 @@ app.get("/getproducts", async (req, res) => {
   }
 });
 
+// single product by id
 app.get("/products/:id", async (req, res) => {
   try {
     const rawId = req.params.id;
     const db = await getDb();
 
+    // numeric id
     if (!isNaN(rawId)) {
       const idNum = Number(rawId);
       const doc = await db.collection("tblproducts").findOne({ id: idNum });
       if (doc) return res.json(doc);
     }
 
+    // ObjectId
     if (/^[0-9a-fA-F]{24}$/.test(rawId)) {
       const doc = await db
         .collection("tblproducts")
@@ -85,6 +98,7 @@ app.get("/products/:id", async (req, res) => {
       if (doc) return res.json(doc);
     }
 
+    // string id / title
     const doc = await db.collection("tblproducts").findOne({
       $or: [{ product_id: rawId }, { id: rawId }, { title: rawId }],
     });
@@ -97,7 +111,10 @@ app.get("/products/:id", async (req, res) => {
   }
 });
 
-// ----------------- CATEGORIES -----------------
+/* =========================
+ *   CATEGORIES
+ * ======================= */
+
 app.get("/categories", async (req, res) => {
   try {
     const db = await getDb();
@@ -128,9 +145,11 @@ app.get("/categories/:category", async (req, res) => {
   }
 });
 
-// ----------------- CUSTOMERS -----------------
+/* =========================
+ *   CUSTOMERS
+ * ======================= */
 
-// all customers (admin)
+// all customers (admin use)
 app.get("/getcustomers", async (req, res) => {
   try {
     const db = await getDb();
@@ -142,7 +161,7 @@ app.get("/getcustomers", async (req, res) => {
   }
 });
 
-// register customer (with validation + PASSWORD HASH)
+// register customer
 app.post("/customerregister", async (req, res) => {
   try {
     const {
@@ -224,7 +243,7 @@ app.post("/customerregister", async (req, res) => {
   }
 });
 
-// secure login
+// login
 app.post("/login", async (req, res) => {
   try {
     const { UserId, Password } = req.body;
@@ -268,7 +287,7 @@ app.post("/login", async (req, res) => {
 
 /* ------------ PROFILE (GET + UPDATE) ------------- */
 
-// GET profile
+// GET profile – simple
 app.get("/customers/:userId", async (req, res) => {
   try {
     const userId = String(req.params.userId || "").trim();
@@ -276,27 +295,13 @@ app.get("/customers/:userId", async (req, res) => {
 
     const customer = await db.collection("tblcustomers").findOne(
       { UserId: userId },
-      {
-        projection: {
-          Password: 0,
-        },
-      }
+      { projection: { Password: 0 } }
     );
 
     if (!customer) {
-      // try other quick fallbacks
-      let fallback = null;
-      if (/^[0-9a-fA-F]{24}$/.test(userId)) {
-        fallback = await db
-          .collection("tblcustomers")
-          .findOne({ _id: new ObjectId(userId) }, { projection: { Password: 0 } });
-      }
-      if (!customer && !fallback) {
-        return res
-          .status(404)
-          .json({ success: false, message: "User not found" });
-      }
-      return res.json({ success: true, customer: fallback });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
     }
 
     return res.json({ success: true, customer });
@@ -308,13 +313,11 @@ app.get("/customers/:userId", async (req, res) => {
   }
 });
 
-// UPDATE profile (robust + tolerant matching)
+// UPDATE profile – simple & exact by UserId
 app.put("/customers/:userId", async (req, res) => {
   try {
-    const userIdRaw = req.params.userId;
-    const userId = String(userIdRaw || "").trim();
-
-    console.log("PUT /customers/:userId called for:", userId, "body:", req.body);
+    const userId = String(req.params.userId || "").trim();
+    console.log("PUT /customers/:userId =", userId, "body:", req.body);
 
     const {
       FirstName,
@@ -332,22 +335,21 @@ app.put("/customers/:userId", async (req, res) => {
 
     const db = await getDb();
 
-    // build updateDoc
-    const updateDoc = {
-      $set: {
-        FirstName: FirstName || "",
-        LastName: LastName || "",
-        DateOfBirth: DateOfBirth ? new Date(DateOfBirth) : null,
-        Email: Email || "",
-        Gender: Gender || "",
-        Address: Address || "",
-        PostalCode: PostalCode || "",
-        State: State || "",
-        Country: Country || "",
-        Mobile: Mobile || "",
-      },
+    // set doc fields
+    const setDoc = {
+      FirstName: FirstName || "",
+      LastName: LastName || "",
+      DateOfBirth: DateOfBirth ? new Date(DateOfBirth) : null,
+      Email: Email || "",
+      Gender: Gender || "",
+      Address: Address || "",
+      PostalCode: PostalCode || "",
+      State: State || "",
+      Country: Country || "",
+      Mobile: Mobile || "",
     };
 
+    // password change (optional)
     if (Password && String(Password).trim() !== "") {
       if (String(Password).trim().length < 6) {
         return res.status(400).json({
@@ -356,68 +358,67 @@ app.put("/customers/:userId", async (req, res) => {
         });
       }
       const hashed = await bcrypt.hash(String(Password).trim(), 10);
-      updateDoc.$set.Password = hashed;
+      setDoc.Password = hashed;
     }
 
-    // build tolerant filters: exact, lowercase, spaces/underscores swapped, _id
-    const filters = [];
-
-    const cleaned = userId;
-    const altUnderscore = cleaned.replace(/\s+/g, "_");
-    const altSpace = cleaned.replace(/_+/g, " ");
-    const lower = cleaned.toLowerCase();
-
-    filters.push({ UserId: cleaned });
-    if (altUnderscore !== cleaned) filters.push({ UserId: altUnderscore });
-    if (altSpace !== cleaned) filters.push({ UserId: altSpace });
-    filters.push({ userId: cleaned });
-    filters.push({ userId: altUnderscore });
-    filters.push({ userId: altSpace });
-    filters.push({ UserId: { $regex: `^${cleaned}$`, $options: "i" }});
-    filters.push({ userId: { $regex: `^${cleaned}$`, $options: "i" }});
-
-    if (/^[0-9a-fA-F]{24}$/.test(cleaned)) {
-      try {
-        filters.push({ _id: new ObjectId(cleaned) });
-      } catch (e) {}
-    }
-
-    console.log("Attempting update with filters:", filters);
-
-    const result = await db.collection("tblcustomers").findOneAndUpdate(
-      { $or: filters },
-      updateDoc,
-      { returnDocument: "after", projection: { Password: 0 } }
+    // exact match on UserId
+    const result = await db.collection("tblcustomers").updateOne(
+      { UserId: userId },
+      { $set: setDoc }
     );
 
-    if (!result.value) {
-      console.log("No document matched for update. Filters tried:", filters);
-      return res.status(404).json({ success: false, message: "User not found" });
+    if (!result.matchedCount) {
+      console.log("No customer found for UserId:", userId);
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
     }
+
+    const updated = await db.collection("tblcustomers").findOne(
+      { UserId: userId },
+      { projection: { Password: 0 } }
+    );
 
     return res.json({
       success: true,
       message: "Profile updated successfully",
-      customer: result.value,
+      customer: updated,
     });
   } catch (err) {
     console.error("PUT /customers/:userId error:", err);
-    return res.status(500).json({ success: false, message: "Profile update failed" });
+    return res
+      .status(500)
+      .json({ success: false, message: "Profile update failed" });
   }
 });
 
-// fallback endpoint for updates (POST)
+// optional fallback endpoint (POST) – front-end use nahi kar raha, par rakh sakte ho
 app.post("/updatecustomer", async (req, res) => {
   try {
     const payload = req.body;
     const userId = payload.UserId || payload.userId;
     if (!userId) {
-      return res.status(400).json({ success: false, message: "userId required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "userId required" });
     }
 
     const updateDoc = { $set: {} };
-    const fields = ["FirstName","LastName","DateOfBirth","Email","Gender","Address","PostalCode","State","Country","Mobile","Password"];
-    fields.forEach(f => {
+    const fields = [
+      "FirstName",
+      "LastName",
+      "DateOfBirth",
+      "Email",
+      "Gender",
+      "Address",
+      "PostalCode",
+      "State",
+      "Country",
+      "Mobile",
+      "Password",
+    ];
+
+    fields.forEach((f) => {
       if (payload[f] !== undefined && f !== "Password") {
         if (f === "DateOfBirth") {
           updateDoc.$set[f] = payload[f] ? new Date(payload[f]) : null;
@@ -429,39 +430,54 @@ app.post("/updatecustomer", async (req, res) => {
 
     if (payload.Password && String(payload.Password).trim() !== "") {
       if (String(payload.Password).trim().length < 6) {
-        return res.status(400).json({ success:false, message:"New password must be at least 6 characters."});
+        return res.status(400).json({
+          success: false,
+          message: "New password must be at least 6 characters.",
+        });
       }
-      updateDoc.$set.Password = await bcrypt.hash(String(payload.Password).trim(), 10);
+      updateDoc.$set.Password = await bcrypt.hash(
+        String(payload.Password).trim(),
+        10
+      );
     }
 
     const db = await getDb();
-    const filters = [{ UserId: userId }, { userId: userId }];
-    if (/^[0-9a-fA-F]{24}$/.test(userId)) {
-      try { filters.push({ _id: new ObjectId(userId) }); } catch(e){}
-    }
-
-    const result = await db.collection("tblcustomers").findOneAndUpdate(
-      { $or: filters },
-      updateDoc,
-      { returnDocument: "after", projection: { Password: 0 } }
+    const result = await db.collection("tblcustomers").updateOne(
+      { UserId: userId },
+      updateDoc
     );
 
-    if (!result.value) {
-      return res.status(404).json({ success:false, message: "User not found" });
+    if (!result.matchedCount) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
     }
 
-    return res.json({ success:true, message:"Profile updated (fallback)", customer: result.value });
-  } catch(err) {
+    const updated = await db.collection("tblcustomers").findOne(
+      { UserId: userId },
+      { projection: { Password: 0 } }
+    );
+
+    return res.json({
+      success: true,
+      message: "Profile updated (fallback)",
+      customer: updated,
+    });
+  } catch (err) {
     console.error("POST /updatecustomer error:", err);
-    return res.status(500).json({ success:false, message:"Update failed" });
+    return res
+      .status(500)
+      .json({ success: false, message: "Update failed" });
   }
 });
 
-// ----------------- ORDERS -----------------
+/* =========================
+ *   ORDERS
+ * ======================= */
+
 app.post("/createorder", async (req, res) => {
   try {
     const db = await getDb();
-
     const payload = req.body;
 
     if (!payload || !Array.isArray(payload.items) || payload.items.length === 0) {
@@ -520,16 +536,18 @@ app.post("/createorder", async (req, res) => {
       const key = String(it.productId);
       const prod = productMap[key];
       if (!prod) {
-        return res
-          .status(400)
-          .json({ success: false, message: `Product not found: ${it.productId}` });
+        return res.status(400).json({
+          success: false,
+          message: `Product not found: ${it.productId}`,
+        });
       }
       const unitPrice = Number(prod.price || 0);
       const qty = Number(it.qty || 1);
       if (isNaN(unitPrice)) {
-        return res
-          .status(500)
-          .json({ success: false, message: "Server product price error" });
+        return res.status(500).json({
+          success: false,
+          message: "Server product price error",
+        });
       }
       const lineTotal = unitPrice * qty;
       computedSubtotal += lineTotal;
@@ -578,9 +596,10 @@ app.post("/createorder", async (req, res) => {
     });
   } catch (err) {
     console.error("Create order failed:", err);
-    return res
-      .status(500)
-      .json({ success: false, message: err.message || "Unknown server error" });
+    return res.status(500).json({
+      success: false,
+      message: err.message || "Unknown server error",
+    });
   }
 });
 
@@ -611,16 +630,20 @@ app.get("/orders/:userId", async (req, res) => {
   }
 });
 
-// ----------------- CART -----------------
+/* =========================
+ *   CART
+ * ======================= */
+
 app.post("/addtocart", async (req, res) => {
   try {
     const db = await getDb();
     const { userId, productId, qty } = req.body;
 
     if (!userId || !productId) {
-      return res
-        .status(400)
-        .json({ success: false, message: "userId and productId required" });
+      return res.status(400).json({
+        success: false,
+        message: "userId and productId required",
+      });
     }
 
     const existing = await db
@@ -664,7 +687,10 @@ app.get("/getcart/:userId", async (req, res) => {
   }
 });
 
-// ----------------- CATCH-ALL -----------------
+/* =========================
+ *   CATCH-ALL
+ * ======================= */
+
 app.use((req, res) => {
   const isApi =
     req.path.startsWith("/products") ||
@@ -688,7 +714,10 @@ app.use((req, res) => {
   });
 });
 
-// ----------------- START SERVER -----------------
+/* =========================
+ *   START SERVER
+ * ======================= */
+
 const PORT = process.env.PORT || 4400;
 app.listen(PORT, () =>
   console.log(`API Starter http://127.0.0.1:${PORT}`)
