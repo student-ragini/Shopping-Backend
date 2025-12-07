@@ -24,21 +24,10 @@ app.use(
   })
 );
 
-// Preflight (OPTIONS)
-app.options("*", (req, res) => {
-  res.setHeader("Access-Control-Allow-Origin", req.headers.origin || "*");
-  res.setHeader(
-    "Access-Control-Allow-Methods",
-    "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS"
-  );
-  res.setHeader(
-    "Access-Control-Allow-Headers",
-    req.headers["access-control-request-headers"] || "Content-Type"
-  );
-  return res.status(204).end();
-});
+// ⚠️ Yahan pe pehle app.options("*", ...) tha – ab hata diya hai
+// Express 5 mein "*" allow nahi, isiliye error aa raha tha.
 
-// static files (agar kabhi chahiye)
+// static files (optional)
 app.use(express.static(path.join(__dirname, "public")));
 
 /* =========================
@@ -392,7 +381,7 @@ app.put("/customers/:userId", async (req, res) => {
   }
 });
 
-// optional fallback endpoint (POST) – front-end use nahi kar raha, par rakh sakte ho
+// optional fallback endpoint (POST)
 app.post("/updatecustomer", async (req, res) => {
   try {
     const payload = req.body;
