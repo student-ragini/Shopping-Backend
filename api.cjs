@@ -714,6 +714,70 @@ app.get("/getcart/:userId", async (req, res) => {
   }
 });
 
+// ========== ADMIN LOGIN ==========
+
+app.post("/admin/login", async (req, res) => {
+  try {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Username and Password required" });
+    }
+
+    const db = await getDb();
+    const admin = await db
+      .collection("tbladmins")
+      .findOne({ username: username });
+
+    if (!admin || admin.password !== password) {
+      return res
+        .status(401)
+        .json({ success: false, message: "Invalid admin credentials" });
+    }
+
+    // Simple project ke liye sirf success bhej rahe hain
+    return res.json({
+      success: true,
+      message: "Admin login success",
+      username: admin.username,
+    });
+  } catch (err) {
+    console.error("POST /admin/login error:", err);
+    res
+      .status(500)
+      .json({ success: false, message: "Admin login failed" });
+  }
+});
+
+// ========== ADMIN: ALL ORDERS LIST ==========
+
+app.get("/admin/orders", async (req, res) => {
+  try {
+    const db = await getDb();
+    const status = req.query.status; // optional ?status=Processing
+
+    const query =
+      status && status !== "All"
+        ? { status: status }
+        : {};
+
+    const orders = await db
+      .collection("tblorders")
+      .find(query)
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    return res.json({ success: true, orders });
+  } catch (err) {
+    console.error("GET /admin/orders error:", err);
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to load admin orders" });
+  }
+});
+
 /* =========================
  *   CATCH-ALL
  * ======================= */
