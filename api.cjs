@@ -457,11 +457,10 @@ app.post("/updatecustomer", async (req, res) => {
   }
 });
 
-/* =========================
- *   ORDERS
- * ======================= */
+// =========================
+//   ORDERS
+// =========================
 
-// create order
 app.post("/createorder", async (req, res) => {
   try {
     const db = await getDb();
@@ -571,7 +570,7 @@ app.post("/createorder", async (req, res) => {
       tax,
       total,
       createdAt: new Date(),
-      status: "Created", // default status
+      status: "Created",      // 🔴 yahi se start hoga
     };
 
     const insertRes = await db.collection("tblorders").insertOne(orderDoc);
@@ -611,19 +610,14 @@ app.get("/orders/:userId", async (req, res) => {
   }
 });
 
-// update order status
+// Update order status (Created / Processing / Shipped / Delivered / Cancelled)
 app.patch("/orders/:orderId/status", async (req, res) => {
   try {
     const orderId = String(req.params.orderId || "").trim();
     const { status } = req.body || {};
 
-    const allowed = [
-      "Created",
-      "Processing",
-      "Shipped",
-      "Delivered",
-      "Cancelled",
-    ];
+    // allowed statuses
+    const allowed = ["Created", "Processing", "Shipped", "Delivered", "Cancelled"];
     if (!allowed.includes(status)) {
       return res.status(400).json({
         success: false,
