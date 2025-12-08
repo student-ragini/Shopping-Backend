@@ -24,8 +24,8 @@ app.use(
   })
 );
 
-// ⚠️ Pehle yahan app.options("*", ...) tha – hata diya
-// Express 5 mein "*" ke saath crash aa raha tha.
+// ⚠️ yahan pe koi app.options("*", ...) nahi hai
+// (Express 5 mein iski wajah se error aa raha tha)
 
 // static files (optional)
 app.use(express.static(path.join(__dirname, "public")));
@@ -276,7 +276,7 @@ app.post("/login", async (req, res) => {
 
 /* ------------ PROFILE (GET + UPDATE) ------------- */
 
-// GET profile – simple
+// GET profile
 app.get("/customers/:userId", async (req, res) => {
   try {
     const userId = String(req.params.userId || "").trim();
@@ -302,7 +302,7 @@ app.get("/customers/:userId", async (req, res) => {
   }
 });
 
-// UPDATE profile – simple & exact by UserId
+// UPDATE profile
 app.put("/customers/:userId", async (req, res) => {
   try {
     const userId = String(req.params.userId || "").trim();
@@ -324,7 +324,6 @@ app.put("/customers/:userId", async (req, res) => {
 
     const db = await getDb();
 
-    // set doc fields
     const setDoc = {
       FirstName: FirstName || "",
       LastName: LastName || "",
@@ -338,7 +337,6 @@ app.put("/customers/:userId", async (req, res) => {
       Mobile: Mobile || "",
     };
 
-    // password change (optional)
     if (Password && String(Password).trim() !== "") {
       if (String(Password).trim().length < 6) {
         return res.status(400).json({
@@ -350,7 +348,6 @@ app.put("/customers/:userId", async (req, res) => {
       setDoc.Password = hashed;
     }
 
-    // exact match on UserId
     const result = await db.collection("tblcustomers").updateOne(
       { UserId: userId },
       { $set: setDoc }
@@ -464,6 +461,7 @@ app.post("/updatecustomer", async (req, res) => {
  *   ORDERS
  * ======================= */
 
+// create order
 app.post("/createorder", async (req, res) => {
   try {
     const db = await getDb();
@@ -573,7 +571,7 @@ app.post("/createorder", async (req, res) => {
       tax,
       total,
       createdAt: new Date(),
-      status: "Created", // 🔹 default status
+      status: "Created", // default status
     };
 
     const insertRes = await db.collection("tblorders").insertOne(orderDoc);
@@ -600,7 +598,7 @@ app.get("/orders/:userId", async (req, res) => {
 
     const orders = await db
       .collection("tblorders")
-      .find({ userId: userId })
+      .find({ userId })
       .sort({ createdAt: -1 })
       .toArray();
 
@@ -613,7 +611,7 @@ app.get("/orders/:userId", async (req, res) => {
   }
 });
 
-// update order status (Created / Processing / Shipped / Delivered / Cancelled)
+// update order status
 app.patch("/orders/:orderId/status", async (req, res) => {
   try {
     const orderId = String(req.params.orderId || "").trim();
@@ -626,7 +624,6 @@ app.patch("/orders/:orderId/status", async (req, res) => {
       "Delivered",
       "Cancelled",
     ];
-
     if (!allowed.includes(status)) {
       return res.status(400).json({
         success: false,
