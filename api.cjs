@@ -15,7 +15,6 @@ const app = express();
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
-// CORS – frontend ko allow
 app.use(
   cors({
     origin: true,
@@ -24,10 +23,7 @@ app.use(
   })
 );
 
-// ⚠️ yahan pe koi app.options("*", ...) nahi hai
-// (Express 5 mein iski wajah se error aa raha tha)
-
-// static files (optional)
+// static files
 app.use(express.static(path.join(__dirname, "public")));
 
 /* =========================
@@ -54,7 +50,6 @@ async function getDb() {
  *   PRODUCTS
  * ======================= */
 
-// all products
 app.get("/getproducts", async (req, res) => {
   try {
     const db = await getDb();
@@ -66,7 +61,6 @@ app.get("/getproducts", async (req, res) => {
   }
 });
 
-// single product by id
 app.get("/products/:id", async (req, res) => {
   try {
     const rawId = req.params.id;
@@ -87,7 +81,7 @@ app.get("/products/:id", async (req, res) => {
       if (doc) return res.json(doc);
     }
 
-    // string id / title
+    // string / title
     const doc = await db.collection("tblproducts").findOne({
       $or: [{ product_id: rawId }, { id: rawId }, { title: rawId }],
     });
@@ -138,7 +132,6 @@ app.get("/categories/:category", async (req, res) => {
  *   CUSTOMERS
  * ======================= */
 
-// all customers (admin use)
 app.get("/getcustomers", async (req, res) => {
   try {
     const db = await getDb();
@@ -150,7 +143,6 @@ app.get("/getcustomers", async (req, res) => {
   }
 });
 
-// register customer
 app.post("/customerregister", async (req, res) => {
   try {
     const {
@@ -189,7 +181,6 @@ app.post("/customerregister", async (req, res) => {
     }
 
     const db = await getDb();
-
     const existing = await db
       .collection("tblcustomers")
       .findOne({ UserId: UserId });
@@ -232,7 +223,6 @@ app.post("/customerregister", async (req, res) => {
   }
 });
 
-// login
 app.post("/login", async (req, res) => {
   try {
     const { UserId, Password } = req.body;
@@ -274,9 +264,8 @@ app.post("/login", async (req, res) => {
   }
 });
 
-/* ------------ PROFILE (GET + UPDATE) ------------- */
+/* PROFILE GET / UPDATE */
 
-// GET profile
 app.get("/customers/:userId", async (req, res) => {
   try {
     const userId = String(req.params.userId || "").trim();
@@ -302,7 +291,6 @@ app.get("/customers/:userId", async (req, res) => {
   }
 });
 
-// UPDATE profile
 app.put("/customers/:userId", async (req, res) => {
   try {
     const userId = String(req.params.userId || "").trim();
@@ -378,7 +366,8 @@ app.put("/customers/:userId", async (req, res) => {
   }
 });
 
-// optional fallback endpoint (POST)
+/* fallback POST /updatecustomer (optional) */
+
 app.post("/updatecustomer", async (req, res) => {
   try {
     const payload = req.body;
@@ -457,9 +446,9 @@ app.post("/updatecustomer", async (req, res) => {
   }
 });
 
-// =========================
-//   ORDERS
-// =========================
+/* =========================
+ *   ORDERS
+ * ======================= */
 
 app.post("/createorder", async (req, res) => {
   try {
@@ -570,7 +559,7 @@ app.post("/createorder", async (req, res) => {
       tax,
       total,
       createdAt: new Date(),
-      status: "Created",      // 🔴 yahi se start hoga
+      status: "Created",
     };
 
     const insertRes = await db.collection("tblorders").insertOne(orderDoc);
@@ -589,7 +578,7 @@ app.post("/createorder", async (req, res) => {
   }
 });
 
-// list orders for a user
+// user ke sab orders
 app.get("/orders/:userId", async (req, res) => {
   try {
     const userId = req.params.userId;
@@ -610,13 +599,12 @@ app.get("/orders/:userId", async (req, res) => {
   }
 });
 
-// Update order status (Created / Processing / Shipped / Delivered / Cancelled)
+// status update (admin + customer cancel)
 app.patch("/orders/:orderId/status", async (req, res) => {
   try {
     const orderId = String(req.params.orderId || "").trim();
     const { status } = req.body || {};
 
-    // allowed statuses
     const allowed = ["Created", "Processing", "Shipped", "Delivered", "Cancelled"];
     if (!allowed.includes(status)) {
       return res.status(400).json({
@@ -714,8 +702,11 @@ app.get("/getcart/:userId", async (req, res) => {
   }
 });
 
-// ========== ADMIN LOGIN ==========
+/* =========================
+ *   ADMIN
+ * ======================= */
 
+// SIMPLE admin login (username/password plain text in tbladmins)
 app.post("/admin/login", async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -737,7 +728,6 @@ app.post("/admin/login", async (req, res) => {
         .json({ success: false, message: "Invalid admin credentials" });
     }
 
-    // Simple project ke liye sirf success bhej rahe hain
     return res.json({
       success: true,
       message: "Admin login success",
@@ -751,12 +741,11 @@ app.post("/admin/login", async (req, res) => {
   }
 });
 
-// ========== ADMIN: ALL ORDERS LIST ==========
-
+// admin – all orders
 app.get("/admin/orders", async (req, res) => {
   try {
     const db = await getDb();
-    const status = req.query.status; // optional ?status=Processing
+    const status = req.query.status;
 
     const query =
       status && status !== "All"
