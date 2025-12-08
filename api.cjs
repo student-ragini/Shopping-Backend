@@ -24,8 +24,8 @@ app.use(
   })
 );
 
-// ⚠️ Yahan pe pehle app.options("*", ...) tha – ab hata diya hai
-// Express 5 mein "*" allow nahi, isiliye error aa raha tha.
+// ⚠️ Pehle yahan app.options("*", ...) tha – hata diya
+// Express 5 mein "*" ke saath crash aa raha tha.
 
 // static files (optional)
 app.use(express.static(path.join(__dirname, "public")));
@@ -573,7 +573,7 @@ app.post("/createorder", async (req, res) => {
       tax,
       total,
       createdAt: new Date(),
-      status: "created",
+      status: "Created", // 🔹 default status
     };
 
     const insertRes = await db.collection("tblorders").insertOne(orderDoc);
@@ -592,6 +592,7 @@ app.post("/createorder", async (req, res) => {
   }
 });
 
+// list orders for a user
 app.get("/orders/:userId", async (req, res) => {
   try {
     const userId = req.params.userId;
@@ -599,14 +600,7 @@ app.get("/orders/:userId", async (req, res) => {
 
     const orders = await db
       .collection("tblorders")
-      .find({
-        $or: [
-          { userId: userId },
-          { userId: null },
-          { userId: "" },
-          { userId: { $exists: false } },
-        ],
-      })
+      .find({ userId: userId })
       .sort({ createdAt: -1 })
       .toArray();
 
@@ -616,6 +610,59 @@ app.get("/orders/:userId", async (req, res) => {
     res
       .status(500)
       .json({ success: false, message: "Failed to load orders" });
+  }
+});
+
+// update order status (Created / Processing / Shipped / Delivered / Cancelled)
+app.patch("/orders/:orderId/status", async (req, res) => {
+  try {
+    const orderId = String(req.params.orderId || "").trim();
+    const { status } = req.body || {};
+
+    const allowed = [
+      "Created",
+      "Processing",
+      "Shipped",
+      "Delivered",
+      "Cancelled",
+    ];
+
+    if (!allowed.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid status value",
+      });
+    }
+
+    const db = await getDb();
+
+    const result = await db.collection("tblorders").findOneAndUpdate(
+      { _id: new ObjectId(orderId) },
+      {
+        $set: {
+          status,
+          updatedAt: new Date(),
+        },
+      },
+      { returnDocument: "after" }
+    );
+
+    if (!result.value) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Order not found" });
+    }
+
+    return res.json({
+      success: true,
+      message: "Order status updated",
+      order: result.value,
+    });
+  } catch (err) {
+    console.error("PATCH /orders/:orderId/status error:", err);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to update status" });
   }
 });
 
