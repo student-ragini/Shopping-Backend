@@ -23,7 +23,7 @@ app.use(
   })
 );
 
-// static files
+// static files (optional)
 app.use(express.static(path.join(__dirname, "public")));
 
 /* =========================
@@ -68,12 +68,14 @@ app.get("/products/:id", async (req, res) => {
     const rawId = req.params.id;
     const db = await getDb();
 
+    // numeric id
     if (!isNaN(rawId)) {
       const idNum = Number(rawId);
       const doc = await db.collection("tblproducts").findOne({ id: idNum });
       if (doc) return res.json(doc);
     }
 
+    // ObjectId
     if (/^[0-9a-fA-F]{24}$/.test(rawId)) {
       const doc = await db
         .collection("tblproducts")
@@ -81,6 +83,7 @@ app.get("/products/:id", async (req, res) => {
       if (doc) return res.json(doc);
     }
 
+    // string id / title
     const doc = await db.collection("tblproducts").findOne({
       $or: [{ product_id: rawId }, { id: rawId }, { title: rawId }],
     });
@@ -131,6 +134,7 @@ app.get("/categories/:category", async (req, res) => {
  *   CUSTOMERS
  * ======================= */
 
+// all customers (admin use)
 app.get("/getcustomers", async (req, res) => {
   try {
     const db = await getDb();
@@ -181,6 +185,7 @@ app.post("/customerregister", async (req, res) => {
     }
 
     const db = await getDb();
+
     const existing = await db
       .collection("tblcustomers")
       .findOne({ UserId: UserId });
@@ -265,8 +270,9 @@ app.post("/login", async (req, res) => {
   }
 });
 
-/* PROFILE GET + UPDATE */
+/* ------------ PROFILE (GET + UPDATE) ------------- */
 
+// GET profile
 app.get("/customers/:userId", async (req, res) => {
   try {
     const userId = String(req.params.userId || "").trim();
@@ -292,9 +298,11 @@ app.get("/customers/:userId", async (req, res) => {
   }
 });
 
+// UPDATE profile
 app.put("/customers/:userId", async (req, res) => {
   try {
     const userId = String(req.params.userId || "").trim();
+    console.log("PUT /customers/:userId =", userId, "body:", req.body);
 
     const {
       FirstName,
@@ -342,6 +350,7 @@ app.put("/customers/:userId", async (req, res) => {
     );
 
     if (!result.matchedCount) {
+      console.log("No customer found for UserId:", userId);
       return res
         .status(404)
         .json({ success: false, message: "User not found" });
@@ -365,89 +374,11 @@ app.put("/customers/:userId", async (req, res) => {
   }
 });
 
-/* fallback profile update (optional) */
-app.post("/updatecustomer", async (req, res) => {
-  try {
-    const payload = req.body;
-    const userId = payload.UserId || payload.userId;
-    if (!userId) {
-      return res
-        .status(400)
-        .json({ success: false, message: "userId required" });
-    }
-
-    const updateDoc = { $set: {} };
-    const fields = [
-      "FirstName",
-      "LastName",
-      "DateOfBirth",
-      "Email",
-      "Gender",
-      "Address",
-      "PostalCode",
-      "State",
-      "Country",
-      "Mobile",
-      "Password",
-    ];
-
-    fields.forEach((f) => {
-      if (payload[f] !== undefined && f !== "Password") {
-        if (f === "DateOfBirth") {
-          updateDoc.$set[f] = payload[f] ? new Date(payload[f]) : null;
-        } else {
-          updateDoc.$set[f] = payload[f];
-        }
-      }
-    });
-
-    if (payload.Password && String(payload.Password).trim() !== "") {
-      if (String(payload.Password).trim().length < 6) {
-        return res.status(400).json({
-          success: false,
-          message: "New password must be at least 6 characters.",
-        });
-      }
-      updateDoc.$set.Password = await bcrypt.hash(
-        String(payload.Password).trim(),
-        10
-      );
-    }
-
-    const db = await getDb();
-    const result = await db.collection("tblcustomers").updateOne(
-      { UserId: userId },
-      updateDoc
-    );
-
-    if (!result.matchedCount) {
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found" });
-    }
-
-    const updated = await db.collection("tblcustomers").findOne(
-      { UserId: userId },
-      { projection: { Password: 0 } }
-    );
-
-    return res.json({
-      success: true,
-      message: "Profile updated (fallback)",
-      customer: updated,
-    });
-  } catch (err) {
-    console.error("POST /updatecustomer error:", err);
-    return res
-      .status(500)
-      .json({ success: false, message: "Update failed" });
-  }
-});
-
 /* =========================
  *   ORDERS
  * ======================= */
 
+// create order
 app.post("/createorder", async (req, res) => {
   try {
     const db = await getDb();
@@ -576,7 +507,7 @@ app.post("/createorder", async (req, res) => {
   }
 });
 
-// user-specific orders
+// list orders for a user
 app.get("/orders/:userId", async (req, res) => {
   try {
     const userId = req.params.userId;
@@ -597,7 +528,7 @@ app.get("/orders/:userId", async (req, res) => {
   }
 });
 
-// update order status
+// Update order status (Created / Processing / Shipped / Delivered / Cancelled)
 app.patch("/orders/:orderId/status", async (req, res) => {
   try {
     const orderId = String(req.params.orderId || "").trim();
@@ -613,8 +544,12 @@ app.patch("/orders/:orderId/status", async (req, res) => {
 
     const db = await getDb();
 
+    const filter = /^[0-9a-fA-F]{24}$/.test(orderId)
+      ? { _id: new ObjectId(orderId) }
+      : { _id: orderId };
+
     const result = await db.collection("tblorders").findOneAndUpdate(
-      { _id: new ObjectId(orderId) },
+      filter,
       {
         $set: {
           status,
@@ -704,7 +639,7 @@ app.get("/getcart/:userId", async (req, res) => {
  *   ADMIN
  * ======================= */
 
-// very simple admin login (plain password – sirf demo ke liye)
+// VERY SIMPLE ADMIN (username/password plain text in tbladmins)
 app.post("/admin/login", async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -739,7 +674,7 @@ app.post("/admin/login", async (req, res) => {
   }
 });
 
-// list all orders for admin, optional filter
+// all orders for admin (optional status filter)
 app.get("/admin/orders", async (req, res) => {
   try {
     const db = await getDb();
