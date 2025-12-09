@@ -50,6 +50,7 @@ async function getDb() {
  *   PRODUCTS
  * ======================= */
 
+// all products
 app.get("/getproducts", async (req, res) => {
   try {
     const db = await getDb();
@@ -61,19 +62,18 @@ app.get("/getproducts", async (req, res) => {
   }
 });
 
+// single product by id
 app.get("/products/:id", async (req, res) => {
   try {
     const rawId = req.params.id;
     const db = await getDb();
 
-    // numeric id
     if (!isNaN(rawId)) {
       const idNum = Number(rawId);
       const doc = await db.collection("tblproducts").findOne({ id: idNum });
       if (doc) return res.json(doc);
     }
 
-    // ObjectId
     if (/^[0-9a-fA-F]{24}$/.test(rawId)) {
       const doc = await db
         .collection("tblproducts")
@@ -81,7 +81,6 @@ app.get("/products/:id", async (req, res) => {
       if (doc) return res.json(doc);
     }
 
-    // string / title
     const doc = await db.collection("tblproducts").findOne({
       $or: [{ product_id: rawId }, { id: rawId }, { title: rawId }],
     });
@@ -143,6 +142,7 @@ app.get("/getcustomers", async (req, res) => {
   }
 });
 
+// register customer
 app.post("/customerregister", async (req, res) => {
   try {
     const {
@@ -223,6 +223,7 @@ app.post("/customerregister", async (req, res) => {
   }
 });
 
+// login
 app.post("/login", async (req, res) => {
   try {
     const { UserId, Password } = req.body;
@@ -264,7 +265,7 @@ app.post("/login", async (req, res) => {
   }
 });
 
-/* PROFILE GET / UPDATE */
+/* PROFILE GET + UPDATE */
 
 app.get("/customers/:userId", async (req, res) => {
   try {
@@ -294,7 +295,6 @@ app.get("/customers/:userId", async (req, res) => {
 app.put("/customers/:userId", async (req, res) => {
   try {
     const userId = String(req.params.userId || "").trim();
-    console.log("PUT /customers/:userId =", userId, "body:", req.body);
 
     const {
       FirstName,
@@ -342,7 +342,6 @@ app.put("/customers/:userId", async (req, res) => {
     );
 
     if (!result.matchedCount) {
-      console.log("No customer found for UserId:", userId);
       return res
         .status(404)
         .json({ success: false, message: "User not found" });
@@ -366,8 +365,7 @@ app.put("/customers/:userId", async (req, res) => {
   }
 });
 
-/* fallback POST /updatecustomer (optional) */
-
+/* fallback profile update (optional) */
 app.post("/updatecustomer", async (req, res) => {
   try {
     const payload = req.body;
@@ -578,7 +576,7 @@ app.post("/createorder", async (req, res) => {
   }
 });
 
-// user ke sab orders
+// user-specific orders
 app.get("/orders/:userId", async (req, res) => {
   try {
     const userId = req.params.userId;
@@ -599,7 +597,7 @@ app.get("/orders/:userId", async (req, res) => {
   }
 });
 
-// status update (admin + customer cancel)
+// update order status
 app.patch("/orders/:orderId/status", async (req, res) => {
   try {
     const orderId = String(req.params.orderId || "").trim();
@@ -706,7 +704,7 @@ app.get("/getcart/:userId", async (req, res) => {
  *   ADMIN
  * ======================= */
 
-// SIMPLE admin login (username/password plain text in tbladmins)
+// very simple admin login (plain password – sirf demo ke liye)
 app.post("/admin/login", async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -741,7 +739,7 @@ app.post("/admin/login", async (req, res) => {
   }
 });
 
-// admin – all orders
+// list all orders for admin, optional filter
 app.get("/admin/orders", async (req, res) => {
   try {
     const db = await getDb();
