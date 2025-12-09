@@ -23,7 +23,6 @@ app.use(
   })
 );
 
-// static files (optional)
 app.use(express.static(path.join(__dirname, "public")));
 
 /* =========================
@@ -50,7 +49,6 @@ async function getDb() {
  *   PRODUCTS
  * ======================= */
 
-// all products
 app.get("/getproducts", async (req, res) => {
   try {
     const db = await getDb();
@@ -62,20 +60,17 @@ app.get("/getproducts", async (req, res) => {
   }
 });
 
-// single product by id
 app.get("/products/:id", async (req, res) => {
   try {
     const rawId = req.params.id;
     const db = await getDb();
 
-    // numeric id
     if (!isNaN(rawId)) {
       const idNum = Number(rawId);
       const doc = await db.collection("tblproducts").findOne({ id: idNum });
       if (doc) return res.json(doc);
     }
 
-    // ObjectId
     if (/^[0-9a-fA-F]{24}$/.test(rawId)) {
       const doc = await db
         .collection("tblproducts")
@@ -83,7 +78,6 @@ app.get("/products/:id", async (req, res) => {
       if (doc) return res.json(doc);
     }
 
-    // string id / title
     const doc = await db.collection("tblproducts").findOne({
       $or: [{ product_id: rawId }, { id: rawId }, { title: rawId }],
     });
@@ -134,7 +128,6 @@ app.get("/categories/:category", async (req, res) => {
  *   CUSTOMERS
  * ======================= */
 
-// all customers (admin use)
 app.get("/getcustomers", async (req, res) => {
   try {
     const db = await getDb();
@@ -146,7 +139,6 @@ app.get("/getcustomers", async (req, res) => {
   }
 });
 
-// register customer
 app.post("/customerregister", async (req, res) => {
   try {
     const {
@@ -228,7 +220,6 @@ app.post("/customerregister", async (req, res) => {
   }
 });
 
-// login
 app.post("/login", async (req, res) => {
   try {
     const { UserId, Password } = req.body;
@@ -270,9 +261,8 @@ app.post("/login", async (req, res) => {
   }
 });
 
-/* ------------ PROFILE (GET + UPDATE) ------------- */
+/* PROFILE GET + UPDATE */
 
-// GET profile
 app.get("/customers/:userId", async (req, res) => {
   try {
     const userId = String(req.params.userId || "").trim();
@@ -298,7 +288,6 @@ app.get("/customers/:userId", async (req, res) => {
   }
 });
 
-// UPDATE profile
 app.put("/customers/:userId", async (req, res) => {
   try {
     const userId = String(req.params.userId || "").trim();
@@ -378,7 +367,6 @@ app.put("/customers/:userId", async (req, res) => {
  *   ORDERS
  * ======================= */
 
-// create order
 app.post("/createorder", async (req, res) => {
   try {
     const db = await getDb();
@@ -507,7 +495,6 @@ app.post("/createorder", async (req, res) => {
   }
 });
 
-// list orders for a user
 app.get("/orders/:userId", async (req, res) => {
   try {
     const userId = req.params.userId;
@@ -528,10 +515,10 @@ app.get("/orders/:userId", async (req, res) => {
   }
 });
 
-// Update order status (Created / Processing / Shipped / Delivered / Cancelled)
+// IMPORTANT: order status update
 app.patch("/orders/:orderId/status", async (req, res) => {
   try {
-    const orderId = String(req.params.orderId || "").trim();
+    const rawId = String(req.params.orderId || "").trim();
     const { status } = req.body || {};
 
     const allowed = ["Created", "Processing", "Shipped", "Delivered", "Cancelled"];
@@ -544,12 +531,15 @@ app.patch("/orders/:orderId/status", async (req, res) => {
 
     const db = await getDb();
 
-    const filter = /^[0-9a-fA-F]{24}$/.test(orderId)
-      ? { _id: new ObjectId(orderId) }
-      : { _id: orderId };
+    const filters = [];
+    if (ObjectId.isValid(rawId)) {
+      filters.push({ _id: new ObjectId(rawId) });
+    }
+    // In case some orders were inserted with string _id or orderId field
+    filters.push({ _id: rawId }, { orderId: rawId });
 
     const result = await db.collection("tblorders").findOneAndUpdate(
-      filter,
+      { $or: filters },
       {
         $set: {
           status,
@@ -635,11 +625,8 @@ app.get("/getcart/:userId", async (req, res) => {
   }
 });
 
-/* =========================
- *   ADMIN
- * ======================= */
+/* ========== ADMIN ========== */
 
-// VERY SIMPLE ADMIN (username/password plain text in tbladmins)
 app.post("/admin/login", async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -674,7 +661,6 @@ app.post("/admin/login", async (req, res) => {
   }
 });
 
-// all orders for admin (optional status filter)
 app.get("/admin/orders", async (req, res) => {
   try {
     const db = await getDb();
