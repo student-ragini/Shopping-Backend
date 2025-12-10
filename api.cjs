@@ -22,7 +22,7 @@ app.use(
     methods: "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS",
   })
 );
-
+app.options("*", cors());
 app.use(express.static(path.join(__dirname, "public")));
 
 /* =========================
@@ -462,7 +462,7 @@ app.post("/createorder", async (req, res) => {
       tax,
       total,
       createdAt: new Date(),
-      status: "Created",   // starting status
+      status: "Created",
     };
 
     const insertRes = await db.collection("tblorders").insertOne(orderDoc);
@@ -502,7 +502,7 @@ app.get("/orders/user/:userId", async (req, res) => {
   }
 });
 
-// get single order (details page ke liye optional)
+// get single order (optional for details page)
 app.get("/orders/:orderId", async (req, res) => {
   try {
     const orderId = String(req.params.orderId || "").trim();
