@@ -23,25 +23,28 @@ app.use(
   })
 );
 
-// static files (images etc)
+// static files (agar images /public se serve karna ho)
 app.use(express.static(path.join(__dirname, "public")));
 
 /* =========================
  *   MONGO CONFIG
  * ======================= */
 
-const MONGO_URI =
-  process.env.MONGO_URI ||
-  "mongodb+srv://ragini_user:Ragini%402728@cluster0.nq1itcw.mongodb.net/ishopdb?retryWrites=true&w=majority&appName=Cluster0";
-
+const MONGO_URI = process.env.MONGO_URI; // <- .env me rakho
 const DB_NAME = process.env.DB_NAME || "ishopdb";
 
-const client = new MongoClient(MONGO_URI, {});
+if (!MONGO_URI) {
+  console.warn(
+    "⚠️  MONGO_URI environment variable missing. Set it in .env or Render dashboard."
+  );
+}
+
+const client = new MongoClient(MONGO_URI || "", {});
 
 async function getDb() {
   if (!client.topology || !client.topology.isConnected?.()) {
     await client.connect();
-    console.log("Mongo client connected");
+    console.log("✅ Mongo client connected");
   }
   return client.db(DB_NAME);
 }
@@ -50,7 +53,6 @@ async function getDb() {
  *   PRODUCTS
  * ======================= */
 
-// sab products
 app.get("/getproducts", async (req, res) => {
   try {
     const db = await getDb();
@@ -62,7 +64,6 @@ app.get("/getproducts", async (req, res) => {
   }
 });
 
-// single product by id / _id / product_id / title
 app.get("/products/:id", async (req, res) => {
   try {
     const rawId = req.params.id;
@@ -75,7 +76,7 @@ app.get("/products/:id", async (req, res) => {
       if (doc) return res.json(doc);
     }
 
-    // ObjectId style
+    // ObjectId
     if (/^[0-9a-fA-F]{24}$/.test(rawId)) {
       const doc = await db
         .collection("tblproducts")
@@ -83,7 +84,7 @@ app.get("/products/:id", async (req, res) => {
       if (doc) return res.json(doc);
     }
 
-    // string id ya title
+    // other string fields
     const doc = await db.collection("tblproducts").findOne({
       $or: [{ product_id: rawId }, { id: rawId }, { title: rawId }],
     });
@@ -131,7 +132,7 @@ app.get("/categories/:category", async (req, res) => {
 });
 
 /* =========================
- *   CUSTOMERS (PUBLIC)
+ *   CUSTOMERS
  * ======================= */
 
 app.get("/getcustomers", async (req, res) => {
@@ -145,7 +146,6 @@ app.get("/getcustomers", async (req, res) => {
   }
 });
 
-// register
 app.post("/customerregister", async (req, res) => {
   try {
     const {
@@ -227,7 +227,6 @@ app.post("/customerregister", async (req, res) => {
   }
 });
 
-// login
 app.post("/login", async (req, res) => {
   try {
     const { UserId, Password } = req.body;
@@ -516,14 +515,18 @@ app.get("/orders/:orderId", async (req, res) => {
     const orderId = String(req.params.orderId || "").trim();
     const db = await getDb();
 
-    let filter;
+    const filterOr = [];
+
     if (/^[0-9a-fA-F]{24}$/.test(orderId)) {
-      filter = { _id: new ObjectId(orderId) };
-    } else {
-      filter = { _id: orderId };
+      filterOr.push({ _id: new ObjectId(orderId) });
     }
 
-    const order = await db.collection("tblorders").findOne(filter);
+    // in case _id stored as string
+    filterOr.push({ _id: orderId }, { orderId }, { id: orderId });
+
+    const order = await db
+      .collection("tblorders")
+      .findOne({ $or: filterOr });
 
     if (!order) {
       return res
@@ -546,8 +549,6 @@ app.patch("/orders/:orderId/status", async (req, res) => {
     const orderId = String(req.params.orderId || "").trim();
     const { status } = req.body || {};
 
-    console.log("PATCH /orders/:orderId/status", { orderId, status });
-
     const allowed = ["Created", "Processing", "Shipped", "Delivered", "Cancelled"];
     if (!allowed.includes(status)) {
       return res.status(400).json({
@@ -558,16 +559,17 @@ app.patch("/orders/:orderId/status", async (req, res) => {
 
     const db = await getDb();
 
-    let filter;
+    const filterOr = [];
+
     if (/^[0-9a-fA-F]{24}$/.test(orderId)) {
-      filter = { _id: new ObjectId(orderId) };
-    } else {
-      // in case _id saved as string
-      filter = { _id: orderId };
+      filterOr.push({ _id: new ObjectId(orderId) });
     }
 
+    // in case _id is string or some other field
+    filterOr.push({ _id: orderId }, { orderId }, { id: orderId });
+
     const result = await db.collection("tblorders").findOneAndUpdate(
-      filter,
+      { $or: filterOr },
       {
         $set: {
           status,
@@ -578,7 +580,7 @@ app.patch("/orders/:orderId/status", async (req, res) => {
     );
 
     if (!result.value) {
-      console.log("Order not found for id:", orderId);
+      console.warn("Order not found for id (status change):", orderId, "->", status);
       return res
         .status(404)
         .json({ success: false, message: "Order not found" });
@@ -748,5 +750,5 @@ app.use((req, res) => {
 
 const PORT = process.env.PORT || 4400;
 app.listen(PORT, () =>
-  console.log(`API Starter http://127.0.0.1:${PORT}`)
+  console.log(`🚀 API Starter http://127.0.0.1:${PORT}`)
 );
