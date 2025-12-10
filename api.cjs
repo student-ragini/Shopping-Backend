@@ -22,7 +22,8 @@ app.use(
     methods: "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS",
   })
 );
-app.options("*", cors());
+
+// static just in case you serve images etc.
 app.use(express.static(path.join(__dirname, "public")));
 
 /* =========================
@@ -65,12 +66,14 @@ app.get("/products/:id", async (req, res) => {
     const rawId = req.params.id;
     const db = await getDb();
 
+    // numeric id
     if (!isNaN(rawId)) {
       const idNum = Number(rawId);
       const doc = await db.collection("tblproducts").findOne({ id: idNum });
       if (doc) return res.json(doc);
     }
 
+    // ObjectId
     if (/^[0-9a-fA-F]{24}$/.test(rawId)) {
       const doc = await db
         .collection("tblproducts")
@@ -78,6 +81,7 @@ app.get("/products/:id", async (req, res) => {
       if (doc) return res.json(doc);
     }
 
+    // any string field
     const doc = await db.collection("tblproducts").findOne({
       $or: [{ product_id: rawId }, { id: rawId }, { title: rawId }],
     });
@@ -363,9 +367,9 @@ app.put("/customers/:userId", async (req, res) => {
   }
 });
 
-// =========================
-//   ORDERS
-// =========================
+/* =========================
+ *   ORDERS
+ * ======================= */
 
 // Create order
 app.post("/createorder", async (req, res) => {
@@ -502,7 +506,7 @@ app.get("/orders/user/:userId", async (req, res) => {
   }
 });
 
-// get single order (optional for details page)
+// get single order
 app.get("/orders/:orderId", async (req, res) => {
   try {
     const orderId = String(req.params.orderId || "").trim();
@@ -530,13 +534,19 @@ app.get("/orders/:orderId", async (req, res) => {
   }
 });
 
-// Update order status (Created / Processing / Shipped / Delivered / Cancelled)
+// Update order status
 app.patch("/orders/:orderId/status", async (req, res) => {
   try {
     const orderId = String(req.params.orderId || "").trim();
     const { status } = req.body || {};
 
-    const allowed = ["Created", "Processing", "Shipped", "Delivered", "Cancelled"];
+    const allowed = [
+      "Created",
+      "Processing",
+      "Shipped",
+      "Delivered",
+      "Cancelled",
+    ];
     if (!allowed.includes(status)) {
       return res.status(400).json({
         success: false,
@@ -701,7 +711,7 @@ app.get("/admin/orders", async (req, res) => {
 });
 
 /* =========================
- *   CATCH-ALL
+ *   CATCH-ALL (last)
  * ======================= */
 
 app.use((req, res) => {
@@ -718,7 +728,10 @@ app.use((req, res) => {
     req.path.startsWith("/customers");
 
   if (isApi) {
-    return res.status(404).json({ error: "API endpoint not found" });
+    // yahan tab aayega jab method match nahi hua (jaise GET on PATCH endpoint)
+    return res
+      .status(405)
+      .json({ error: "Method not allowed for this API endpoint" });
   }
 
   return res.status(200).json({
