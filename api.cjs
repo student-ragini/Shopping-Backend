@@ -11,7 +11,6 @@ const app = express();
 /* =========================
  *   MIDDLEWARE
  * ======================= */
-
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
@@ -23,13 +22,12 @@ app.use(
   })
 );
 
-// static just in case you serve images etc.
+// static (public) – optional
 app.use(express.static(path.join(__dirname, "public")));
 
 /* =========================
  *   MONGO CONFIG
  * ======================= */
-
 const MONGO_URI =
   process.env.MONGO_URI ||
   "mongodb+srv://ragini_user:Ragini%402728@cluster0.nq1itcw.mongodb.net/ishopdb?retryWrites=true&w=majority&appName=Cluster0";
@@ -49,12 +47,11 @@ async function getDb() {
 /* =========================
  *   PRODUCTS
  * ======================= */
-
 app.get("/getproducts", async (req, res) => {
   try {
     const db = await getDb();
-    const documents = await db.collection("tblproducts").find({}).toArray();
-    res.json(documents);
+    const docs = await db.collection("tblproducts").find({}).toArray();
+    res.json(docs);
   } catch (err) {
     console.error("GET /getproducts error:", err);
     res.status(500).json({ error: "Server error" });
@@ -81,13 +78,13 @@ app.get("/products/:id", async (req, res) => {
       if (doc) return res.json(doc);
     }
 
-    // any string field
+    // fallback
     const doc = await db.collection("tblproducts").findOne({
       $or: [{ product_id: rawId }, { id: rawId }, { title: rawId }],
     });
 
     if (!doc) return res.status(404).json({ error: "Product not found" });
-    return res.json(doc);
+    res.json(doc);
   } catch (err) {
     console.error("GET /products/:id error:", err);
     res.status(500).json({ error: "Server error" });
@@ -97,12 +94,11 @@ app.get("/products/:id", async (req, res) => {
 /* =========================
  *   CATEGORIES
  * ======================= */
-
 app.get("/categories", async (req, res) => {
   try {
     const db = await getDb();
-    const documents = await db.collection("tblcategories").find({}).toArray();
-    res.json(documents);
+    const docs = await db.collection("tblcategories").find({}).toArray();
+    res.json(docs);
   } catch (err) {
     console.error("GET /categories error:", err);
     res.status(500).json({ error: "Server error" });
@@ -113,15 +109,13 @@ app.get("/categories/:category", async (req, res) => {
   try {
     const cat = req.params.category;
     const db = await getDb();
-
-    const documents = await db
+    const docs = await db
       .collection("tblproducts")
       .find({
         $or: [{ category: cat }, { Category: cat }, { CategoryName: cat }],
       })
       .toArray();
-
-    res.json(documents);
+    res.json(docs);
   } catch (err) {
     console.error("GET /categories/:category error:", err);
     res.status(500).json({ error: "Server error" });
@@ -131,12 +125,11 @@ app.get("/categories/:category", async (req, res) => {
 /* =========================
  *   CUSTOMERS
  * ======================= */
-
 app.get("/getcustomers", async (req, res) => {
   try {
     const db = await getDb();
-    const documents = await db.collection("tblcustomers").find({}).toArray();
-    res.json(documents);
+    const docs = await db.collection("tblcustomers").find({}).toArray();
+    res.json(docs);
   } catch (err) {
     console.error("GET /getcustomers error:", err);
     res.status(500).json({ error: "Server error" });
@@ -181,7 +174,6 @@ app.post("/customerregister", async (req, res) => {
     }
 
     const db = await getDb();
-
     const existing = await db
       .collection("tblcustomers")
       .findOne({ UserId: UserId });
@@ -212,7 +204,7 @@ app.post("/customerregister", async (req, res) => {
 
     await db.collection("tblcustomers").insertOne(data);
 
-    return res.json({
+    res.json({
       success: true,
       message: "Customer registered successfully",
     });
@@ -252,7 +244,7 @@ app.post("/login", async (req, res) => {
         .json({ success: false, message: "Invalid username or password" });
     }
 
-    return res.json({
+    res.json({
       success: true,
       message: "Login success",
       userId: user.UserId,
@@ -266,7 +258,6 @@ app.post("/login", async (req, res) => {
 });
 
 /* PROFILE GET + UPDATE */
-
 app.get("/customers/:userId", async (req, res) => {
   try {
     const userId = String(req.params.userId || "").trim();
@@ -283,7 +274,7 @@ app.get("/customers/:userId", async (req, res) => {
         .json({ success: false, message: "User not found" });
     }
 
-    return res.json({ success: true, customer });
+    res.json({ success: true, customer });
   } catch (err) {
     console.error("GET /customers/:userId error:", err);
     res
@@ -295,8 +286,6 @@ app.get("/customers/:userId", async (req, res) => {
 app.put("/customers/:userId", async (req, res) => {
   try {
     const userId = String(req.params.userId || "").trim();
-    console.log("PUT /customers/:userId =", userId, "body:", req.body);
-
     const {
       FirstName,
       LastName,
@@ -343,7 +332,6 @@ app.put("/customers/:userId", async (req, res) => {
     );
 
     if (!result.matchedCount) {
-      console.log("No customer found for UserId:", userId);
       return res
         .status(404)
         .json({ success: false, message: "User not found" });
@@ -354,14 +342,14 @@ app.put("/customers/:userId", async (req, res) => {
       { projection: { Password: 0 } }
     );
 
-    return res.json({
+    res.json({
       success: true,
       message: "Profile updated successfully",
       customer: updated,
     });
   } catch (err) {
     console.error("PUT /customers/:userId error:", err);
-    return res
+    res
       .status(500)
       .json({ success: false, message: "Profile update failed" });
   }
@@ -471,21 +459,21 @@ app.post("/createorder", async (req, res) => {
 
     const insertRes = await db.collection("tblorders").insertOne(orderDoc);
 
-    return res.json({
+    res.json({
       success: true,
       orderId: String(insertRes.insertedId),
       message: "Order created",
     });
   } catch (err) {
     console.error("Create order failed:", err);
-    return res.status(500).json({
+    res.status(500).json({
       success: false,
       message: err.message || "Unknown server error",
     });
   }
 });
 
-// list orders for a user (My Orders)
+// list orders for a user
 app.get("/orders/user/:userId", async (req, res) => {
   try {
     const userId = req.params.userId;
@@ -525,28 +513,22 @@ app.get("/orders/:orderId", async (req, res) => {
         .json({ success: false, message: "Order not found" });
     }
 
-    return res.json({ success: true, order });
+    res.json({ success: true, order });
   } catch (err) {
     console.error("GET /orders/:orderId error:", err);
-    return res
+    res
       .status(500)
       .json({ success: false, message: "Failed to fetch order" });
   }
 });
 
-// Update order status
+// **UPDATE ORDER STATUS**
 app.patch("/orders/:orderId/status", async (req, res) => {
   try {
     const orderId = String(req.params.orderId || "").trim();
     const { status } = req.body || {};
 
-    const allowed = [
-      "Created",
-      "Processing",
-      "Shipped",
-      "Delivered",
-      "Cancelled",
-    ];
+    const allowed = ["Created", "Processing", "Shipped", "Delivered", "Cancelled"];
     if (!allowed.includes(status)) {
       return res.status(400).json({
         success: false,
@@ -579,14 +561,14 @@ app.patch("/orders/:orderId/status", async (req, res) => {
         .json({ success: false, message: "Order not found" });
     }
 
-    return res.json({
+    res.json({
       success: true,
       message: "Order status updated",
       order: result.value,
     });
   } catch (err) {
     console.error("PATCH /orders/:orderId/status error:", err);
-    return res
+    res
       .status(500)
       .json({ success: false, message: "Failed to update status" });
   }
@@ -595,7 +577,6 @@ app.patch("/orders/:orderId/status", async (req, res) => {
 /* =========================
  *   CART
  * ======================= */
-
 app.post("/addtocart", async (req, res) => {
   try {
     const db = await getDb();
@@ -650,7 +631,6 @@ app.get("/getcart/:userId", async (req, res) => {
 });
 
 /* ========== ADMIN ========== */
-
 app.post("/admin/login", async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -672,7 +652,7 @@ app.post("/admin/login", async (req, res) => {
         .json({ success: false, message: "Invalid admin credentials" });
     }
 
-    return res.json({
+    res.json({
       success: true,
       message: "Admin login success",
       username: admin.username,
@@ -701,7 +681,7 @@ app.get("/admin/orders", async (req, res) => {
       .sort({ createdAt: -1 })
       .toArray();
 
-    return res.json({ success: true, orders });
+    res.json({ success: true, orders });
   } catch (err) {
     console.error("GET /admin/orders error:", err);
     res
@@ -711,11 +691,11 @@ app.get("/admin/orders", async (req, res) => {
 });
 
 /* =========================
- *   CATCH-ALL (last)
+ *   CATCH-ALL (last middleware!)
  * ======================= */
-
 app.use((req, res) => {
-  const isApi =
+  // yahan koi bhi route match nahi hua
+  if (
     req.path.startsWith("/products") ||
     req.path.startsWith("/get") ||
     req.path.startsWith("/categories") ||
@@ -725,13 +705,9 @@ app.use((req, res) => {
     req.path.startsWith("/addtocart") ||
     req.path.startsWith("/login") ||
     req.path.startsWith("/orders") ||
-    req.path.startsWith("/customers");
-
-  if (isApi) {
-    // yahan tab aayega jab method match nahi hua (jaise GET on PATCH endpoint)
-    return res
-      .status(405)
-      .json({ error: "Method not allowed for this API endpoint" });
+    req.path.startsWith("/customers")
+  ) {
+    return res.status(404).json({ error: "API endpoint not found" });
   }
 
   return res.status(200).json({
@@ -743,7 +719,6 @@ app.use((req, res) => {
 /* =========================
  *   START SERVER
  * ======================= */
-
 const PORT = process.env.PORT || 4400;
 app.listen(PORT, () =>
   console.log(`API Starter http://127.0.0.1:${PORT}`)
