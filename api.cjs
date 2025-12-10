@@ -363,10 +363,11 @@ app.put("/customers/:userId", async (req, res) => {
   }
 });
 
-/* =========================
- *   ORDERS
- * ======================= */
+// =========================
+//   ORDERS
+// =========================
 
+// Create order
 app.post("/createorder", async (req, res) => {
   try {
     const db = await getDb();
@@ -435,12 +436,6 @@ app.post("/createorder", async (req, res) => {
       }
       const unitPrice = Number(prod.price || 0);
       const qty = Number(it.qty || 1);
-      if (isNaN(unitPrice)) {
-        return res.status(500).json({
-          success: false,
-          message: "Server product price error",
-        });
-      }
       const lineTotal = unitPrice * qty;
       computedSubtotal += lineTotal;
 
@@ -451,15 +446,6 @@ app.post("/createorder", async (req, res) => {
         qty,
         lineTotal,
       });
-    }
-
-    if (payload.subtotal !== undefined) {
-      const diff = Math.abs(Number(payload.subtotal) - computedSubtotal);
-      if (diff > 0.5) {
-        return res
-          .status(400)
-          .json({ success: false, message: "Subtotal mismatch" });
-      }
     }
 
     const shipping = Number(payload.shipping || 0);
@@ -476,7 +462,7 @@ app.post("/createorder", async (req, res) => {
       tax,
       total,
       createdAt: new Date(),
-      status: "Created",
+      status: "Created",   // starting status
     };
 
     const insertRes = await db.collection("tblorders").insertOne(orderDoc);
@@ -495,7 +481,8 @@ app.post("/createorder", async (req, res) => {
   }
 });
 
-app.get("/orders/:userId", async (req, res) => {
+// list orders for a user (My Orders)
+app.get("/orders/user/:userId", async (req, res) => {
   try {
     const userId = req.params.userId;
     const db = await getDb();
@@ -508,17 +495,45 @@ app.get("/orders/:userId", async (req, res) => {
 
     res.json({ success: true, orders });
   } catch (err) {
-    console.error("GET /orders/:userId error:", err);
+    console.error("GET /orders/user/:userId error:", err);
     res
       .status(500)
       .json({ success: false, message: "Failed to load orders" });
   }
 });
 
-// IMPORTANT: order status update
+// get single order (details page ke liye optional)
+app.get("/orders/:orderId", async (req, res) => {
+  try {
+    const orderId = String(req.params.orderId || "").trim();
+    const db = await getDb();
+
+    let order = null;
+    if (/^[0-9a-fA-F]{24}$/.test(orderId)) {
+      order = await db
+        .collection("tblorders")
+        .findOne({ _id: new ObjectId(orderId) });
+    }
+
+    if (!order) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Order not found" });
+    }
+
+    return res.json({ success: true, order });
+  } catch (err) {
+    console.error("GET /orders/:orderId error:", err);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to fetch order" });
+  }
+});
+
+// Update order status (Created / Processing / Shipped / Delivered / Cancelled)
 app.patch("/orders/:orderId/status", async (req, res) => {
   try {
-    const rawId = String(req.params.orderId || "").trim();
+    const orderId = String(req.params.orderId || "").trim();
     const { status } = req.body || {};
 
     const allowed = ["Created", "Processing", "Shipped", "Delivered", "Cancelled"];
@@ -529,17 +544,16 @@ app.patch("/orders/:orderId/status", async (req, res) => {
       });
     }
 
+    if (!/^[0-9a-fA-F]{24}$/.test(orderId)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid order id" });
+    }
+
     const db = await getDb();
 
-    const filters = [];
-    if (ObjectId.isValid(rawId)) {
-      filters.push({ _id: new ObjectId(rawId) });
-    }
-    // In case some orders were inserted with string _id or orderId field
-    filters.push({ _id: rawId }, { orderId: rawId });
-
     const result = await db.collection("tblorders").findOneAndUpdate(
-      { $or: filters },
+      { _id: new ObjectId(orderId) },
       {
         $set: {
           status,
