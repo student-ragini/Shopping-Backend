@@ -23,7 +23,7 @@ app.use(
   })
 );
 
-// public folder (images etc.)
+// static files (optional)
 app.use(express.static(path.join(__dirname, "public")));
 
 /* =========================
@@ -35,12 +35,6 @@ const MONGO_URI =
   "mongodb+srv://ragini_user:Ragini%402728@cluster0.nq1itcw.mongodb.net/ishopdb?retryWrites=true&w=majority&appName=Cluster0";
 
 const DB_NAME = process.env.DB_NAME || "ishopdb";
-
-if (!MONGO_URI) {
-  console.warn(
-    "⚠️  MONGO_URI environment variable missing. Set it in .env or Render dashboard."
-  );
-}
 
 const client = new MongoClient(MONGO_URI, {});
 
@@ -56,7 +50,7 @@ async function getDb() {
  *   PRODUCTS
  * ======================= */
 
-// sab products
+// all products
 app.get("/getproducts", async (req, res) => {
   try {
     const db = await getDb();
@@ -68,7 +62,7 @@ app.get("/getproducts", async (req, res) => {
   }
 });
 
-// single product
+// single product by id
 app.get("/products/:id", async (req, res) => {
   try {
     const rawId = req.params.id;
@@ -89,7 +83,7 @@ app.get("/products/:id", async (req, res) => {
       if (doc) return res.json(doc);
     }
 
-    // any string fields
+    // string id / title
     const doc = await db.collection("tblproducts").findOne({
       $or: [{ product_id: rawId }, { id: rawId }, { title: rawId }],
     });
@@ -140,7 +134,7 @@ app.get("/categories/:category", async (req, res) => {
  *   CUSTOMERS
  * ======================= */
 
-// sab customers (admin use)
+// all customers (admin use)
 app.get("/getcustomers", async (req, res) => {
   try {
     const db = await getDb();
@@ -152,7 +146,7 @@ app.get("/getcustomers", async (req, res) => {
   }
 });
 
-// register
+// register customer
 app.post("/customerregister", async (req, res) => {
   try {
     const {
@@ -276,7 +270,7 @@ app.post("/login", async (req, res) => {
   }
 });
 
-/* PROFILE GET + UPDATE */
+/* ------------ PROFILE (GET + UPDATE) ------------- */
 
 app.get("/customers/:userId", async (req, res) => {
   try {
@@ -451,6 +445,12 @@ app.post("/createorder", async (req, res) => {
       }
       const unitPrice = Number(prod.price || 0);
       const qty = Number(it.qty || 1);
+      if (isNaN(unitPrice)) {
+        return res.status(500).json({
+          success: false,
+          message: "Server product price error",
+        });
+      }
       const lineTotal = unitPrice * qty;
       computedSubtotal += lineTotal;
 
@@ -477,8 +477,7 @@ app.post("/createorder", async (req, res) => {
       tax,
       total,
       createdAt: new Date(),
-      updatedAt: new Date(),
-      status: "Created",
+      status: "Created", // ⚠️ frontend ke hisaab se initial status
     };
 
     const insertRes = await db.collection("tblorders").insertOne(orderDoc);
@@ -497,7 +496,7 @@ app.post("/createorder", async (req, res) => {
   }
 });
 
-// list orders for a user
+// list orders for a user (My Orders) – matches main.js: /orders/user/:userId
 app.get("/orders/user/:userId", async (req, res) => {
   try {
     const userId = req.params.userId;
@@ -518,27 +517,18 @@ app.get("/orders/user/:userId", async (req, res) => {
   }
 });
 
-// get single order
+// get single order (optional – details page ke liye)
 app.get("/orders/:orderId", async (req, res) => {
   try {
     const orderId = String(req.params.orderId || "").trim();
     const db = await getDb();
 
-    let filter = null;
-
+    let order = null;
     if (/^[0-9a-fA-F]{24}$/.test(orderId)) {
-      filter = { _id: new ObjectId(orderId) };
-    } else {
-      filter = {
-        $or: [
-          { _id: orderId },            // if stored as string
-          { orderId: orderId },
-          { id: orderId },
-        ],
-      };
+      order = await db
+        .collection("tblorders")
+        .findOne({ _id: new ObjectId(orderId) });
     }
-
-    const order = await db.collection("tblorders").findOne(filter);
 
     if (!order) {
       return res
@@ -555,16 +545,11 @@ app.get("/orders/:orderId", async (req, res) => {
   }
 });
 
-// Update order status
+// Update order status (Created / Processing / Shipped / Delivered / Cancelled)
 app.patch("/orders/:orderId/status", async (req, res) => {
   try {
     const orderId = String(req.params.orderId || "").trim();
     const { status } = req.body || {};
-
-    console.log("PATCH /orders/:orderId/status =>", {
-      orderId,
-      status,
-    });
 
     const allowed = ["Created", "Processing", "Shipped", "Delivered", "Cancelled"];
     if (!allowed.includes(status)) {
@@ -574,25 +559,16 @@ app.patch("/orders/:orderId/status", async (req, res) => {
       });
     }
 
-    const db = await getDb();
-
-    // filter banate hain – ObjectId + string sab support
-    let filter;
-
-    if (/^[0-9a-fA-F]{24}$/.test(orderId)) {
-      filter = { _id: new ObjectId(orderId) };
-    } else {
-      filter = {
-        $or: [
-          { _id: orderId },
-          { orderId: orderId },
-          { id: orderId },
-        ],
-      };
+    if (!/^[0-9a-fA-F]{24}$/.test(orderId)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid order id" });
     }
 
+    const db = await getDb();
+
     const result = await db.collection("tblorders").findOneAndUpdate(
-      filter,
+      { _id: new ObjectId(orderId) },
       {
         $set: {
           status,
@@ -603,12 +579,7 @@ app.patch("/orders/:orderId/status", async (req, res) => {
     );
 
     if (!result.value) {
-      console.log(
-        "Order not found for id (status change):",
-        orderId,
-        " status: ",
-        status
-      );
+      console.log("Order not found for id (status change):", orderId, "->", status);
       return res
         .status(404)
         .json({ success: false, message: "Order not found" });
@@ -684,7 +655,9 @@ app.get("/getcart/:userId", async (req, res) => {
   }
 });
 
-/* ========== ADMIN ========== */
+/* =========================
+ *   ADMIN
+ * ======================= */
 
 app.post("/admin/login", async (req, res) => {
   try {
