@@ -1,4 +1,4 @@
-// api.cjs (updated - full file)
+// api.cjs
 const express = require("express");
 const { MongoClient, ObjectId } = require("mongodb");
 const cors = require("cors");
@@ -23,14 +23,7 @@ app.use(
   })
 );
 
-// request logger
-app.use((req, res, next) => {
-  try {
-    console.log(new Date().toISOString(), req.method, req.path);
-  } catch {}
-  next();
-});
-
+// static just in case you serve images etc.
 app.use(express.static(path.join(__dirname, "public")));
 
 /* =========================
@@ -43,44 +36,20 @@ const MONGO_URI =
 
 const DB_NAME = process.env.DB_NAME || "ishopdb";
 
-const client = new MongoClient(MONGO_URI, { useUnifiedTopology: true });
-let mongoConnected = false;
+const client = new MongoClient(MONGO_URI, {});
 
-async function ensureConnected() {
-  if (!mongoConnected) {
+async function getDb() {
+  if (!client.topology || !client.topology.isConnected?.()) {
     await client.connect();
-    mongoConnected = true;
     console.log("Mongo client connected");
   }
   return client.db(DB_NAME);
-}
-
-async function getDb() {
-  return ensureConnected();
-}
-
-/* =========================
- *   HELPERS
- * ======================= */
-
-function isValidObjectId(id) {
-  return typeof id === "string" && /^[0-9a-fA-F]{24}$/.test(id);
-}
-
-async function safeParseJsonResponse(res) {
-  // helper for server->internal parsing; not used widely here but kept for parity
-  try {
-    return await res.json();
-  } catch {
-    return null;
-  }
 }
 
 /* =========================
  *   PRODUCTS
  * ======================= */
 
-// all products
 app.get("/getproducts", async (req, res) => {
   try {
     const db = await getDb();
@@ -92,7 +61,6 @@ app.get("/getproducts", async (req, res) => {
   }
 });
 
-// single product by id (supports numeric id, product_id, ObjectId or title)
 app.get("/products/:id", async (req, res) => {
   try {
     const rawId = req.params.id;
@@ -106,14 +74,14 @@ app.get("/products/:id", async (req, res) => {
     }
 
     // ObjectId
-    if (isValidObjectId(rawId)) {
+    if (/^[0-9a-fA-F]{24}$/.test(rawId)) {
       const doc = await db
         .collection("tblproducts")
         .findOne({ _id: new ObjectId(rawId) });
       if (doc) return res.json(doc);
     }
 
-    // string id / product_id / title
+    // any string field
     const doc = await db.collection("tblproducts").findOne({
       $or: [{ product_id: rawId }, { id: rawId }, { title: rawId }],
     });
@@ -164,7 +132,6 @@ app.get("/categories/:category", async (req, res) => {
  *   CUSTOMERS
  * ======================= */
 
-// all customers (admin use)
 app.get("/getcustomers", async (req, res) => {
   try {
     const db = await getDb();
@@ -176,7 +143,6 @@ app.get("/getcustomers", async (req, res) => {
   }
 });
 
-// register customer
 app.post("/customerregister", async (req, res) => {
   try {
     const {
@@ -258,7 +224,6 @@ app.post("/customerregister", async (req, res) => {
   }
 });
 
-// login
 app.post("/login", async (req, res) => {
   try {
     const { UserId, Password } = req.body;
@@ -300,7 +265,7 @@ app.post("/login", async (req, res) => {
   }
 });
 
-/* ------------ PROFILE (GET + UPDATE) ------------- */
+/* PROFILE GET + UPDATE */
 
 app.get("/customers/:userId", async (req, res) => {
   try {
@@ -420,15 +385,14 @@ app.post("/createorder", async (req, res) => {
 
     const items = payload.items;
 
-    // collect ids of different possible types
     const numericIds = [];
     const objectIds = [];
     const stringIds = [];
 
     items.forEach((it) => {
       const pid = it.productId;
-      if (isValidObjectId(String(pid))) {
-        objectIds.push(new ObjectId(String(pid)));
+      if (typeof pid === "string" && /^[0-9a-fA-F]{24}$/.test(pid)) {
+        objectIds.push(new ObjectId(pid));
       } else if (!isNaN(Number(pid))) {
         numericIds.push(Number(pid));
       } else {
@@ -440,7 +404,10 @@ app.post("/createorder", async (req, res) => {
     if (objectIds.length) queryOr.push({ _id: { $in: objectIds } });
     if (numericIds.length) queryOr.push({ id: { $in: numericIds } });
     if (stringIds.length)
-      queryOr.push({ id: { $in: stringIds } }, { product_id: { $in: stringIds } }, { title: { $in: stringIds } });
+      queryOr.push(
+        { id: { $in: stringIds } },
+        { product_id: { $in: stringIds } }
+      );
 
     let dbProducts = [];
     if (queryOr.length) {
@@ -452,13 +419,11 @@ app.post("/createorder", async (req, res) => {
       dbProducts = await db.collection("tblproducts").find({}).toArray();
     }
 
-    // build map: keys are stringified _id, id, product_id
     const productMap = {};
     dbProducts.forEach((p) => {
       if (p._id) productMap[String(p._id)] = p;
       if (p.id !== undefined) productMap[String(p.id)] = p;
       if (p.product_id !== undefined) productMap[String(p.product_id)] = p;
-      if (p.title !== undefined) productMap[String(p.title)] = p;
     });
 
     let computedSubtotal = 0;
@@ -466,42 +431,20 @@ app.post("/createorder", async (req, res) => {
 
     for (const it of items) {
       const key = String(it.productId);
-      let prod = productMap[key];
+      const prod = productMap[key];
       if (!prod) {
-        // try to find by numeric or _id more leniently
-        let found = null;
-        if (!isNaN(Number(key))) {
-          found = dbProducts.find((p) => String(p.id) === String(Number(key)));
-        }
-        if (!found && isValidObjectId(key)) {
-          found = dbProducts.find((p) => String(p._id) === key);
-        }
-        if (!found) {
-          return res.status(400).json({
-            success: false,
-            message: `Product not found: ${it.productId}`,
-          });
-        }
-        prod = found;
-      }
-
-      const unitPrice = Number((prod && (prod.price || prod.Price)) || 0);
-      const qty = Number(it.qty || it.quantity || 1);
-      if (isNaN(unitPrice)) {
-        return res.status(500).json({
+        return res.status(400).json({
           success: false,
-          message: "Server product price error",
+          message: `Product not found: ${it.productId}`,
         });
       }
+      const unitPrice = Number(prod.price || 0);
+      const qty = Number(it.qty || 1);
       const lineTotal = unitPrice * qty;
       computedSubtotal += lineTotal;
 
-      // store canonical productId as the product _id (string) if available, otherwise id
-      const canonicalId = prod && prod._id ? String(prod._id) : (prod.id !== undefined ? String(prod.id) : String(it.productId));
-
       validatedItems.push({
-        productId: canonicalId,
-        originalProductRef: it.productId,
+        productId: String(prod._id || prod.id),
         title: prod.title || prod.name || "",
         unitPrice,
         qty,
@@ -509,19 +452,11 @@ app.post("/createorder", async (req, res) => {
       });
     }
 
-    // optional subtotal verification (if frontend provided it)
-    if (payload.subtotal !== undefined) {
-      const diff = Math.abs(Number(payload.subtotal) - computedSubtotal);
-      if (diff > 0.5) {
-        return res
-          .status(400)
-          .json({ success: false, message: "Subtotal mismatch" });
-      }
-    }
-
     const shipping = Number(payload.shipping || 0);
     const tax = Number(payload.tax || 0);
-    const total = Number(payload.total || computedSubtotal + shipping + tax);
+    const total = Number(
+      payload.total || computedSubtotal + shipping + tax
+    );
 
     const orderDoc = {
       userId: payload.userId || null,
@@ -571,29 +506,18 @@ app.get("/orders/user/:userId", async (req, res) => {
   }
 });
 
-// get single order (details page)
+// get single order
 app.get("/orders/:orderId", async (req, res) => {
   try {
     const orderId = String(req.params.orderId || "").trim();
     const db = await getDb();
 
-    if (!isValidObjectId(orderId)) {
-      // if not an ObjectId, try other lookups
-      const order = await db
+    let order = null;
+    if (/^[0-9a-fA-F]{24}$/.test(orderId)) {
+      order = await db
         .collection("tblorders")
-        .findOne({ $or: [{ orderId: orderId }, { id: orderId }, { _id: orderId }] });
-
-      if (!order) {
-        return res
-          .status(404)
-          .json({ success: false, message: "Order not found" });
-      }
-      return res.json({ success: true, order });
+        .findOne({ _id: new ObjectId(orderId) });
     }
-
-    const order = await db
-      .collection("tblorders")
-      .findOne({ _id: new ObjectId(orderId) });
 
     if (!order) {
       return res
@@ -610,50 +534,19 @@ app.get("/orders/:orderId", async (req, res) => {
   }
 });
 
-/*
- * NEW: Return order status (convenience GET)
- * - Useful for manually opening the URL in browser for quick check
- * - Supports ObjectId or returns 404 if not found
- */
-app.get("/orders/:orderId/status", async (req, res) => {
-  try {
-    const orderId = String(req.params.orderId || "").trim();
-    const db = await getDb();
-
-    // try ObjectId lookup first
-    if (isValidObjectId(orderId)) {
-      const order = await db
-        .collection("tblorders")
-        .findOne({ _id: new ObjectId(orderId) });
-
-      if (order) {
-        return res.json({ success: true, status: order.status || "Created", order });
-      }
-    }
-
-    // fallback: try lookup by string id field or user-friendly id
-    const orderByOther = await db
-      .collection("tblorders")
-      .findOne({ $or: [{ orderId: orderId }, { _id: orderId }, { id: orderId }] });
-
-    if (orderByOther) {
-      return res.json({ success: true, status: orderByOther.status || "Created", order: orderByOther });
-    }
-
-    return res.status(404).json({ success: false, message: "Order not found" });
-  } catch (err) {
-    console.error("GET /orders/:orderId/status error:", err);
-    return res.status(500).json({ success: false, message: "Server error" });
-  }
-});
-
-// Update order status (Created / Processing / Shipped / Delivered / Cancelled)
+// Update order status
 app.patch("/orders/:orderId/status", async (req, res) => {
   try {
     const orderId = String(req.params.orderId || "").trim();
     const { status } = req.body || {};
 
-    const allowed = ["Created", "Processing", "Shipped", "Delivered", "Cancelled"];
+    const allowed = [
+      "Created",
+      "Processing",
+      "Shipped",
+      "Delivered",
+      "Cancelled",
+    ];
     if (!allowed.includes(status)) {
       return res.status(400).json({
         success: false,
@@ -661,52 +554,26 @@ app.patch("/orders/:orderId/status", async (req, res) => {
       });
     }
 
+    if (!/^[0-9a-fA-F]{24}$/.test(orderId)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid order id" });
+    }
+
     const db = await getDb();
 
-    // Try several approaches so that PATCH works even if id format differs:
-    // 1) If valid ObjectId - update by ObjectId
-    // 2) If not found - try to update by string _id, orderId or id fields
-
-    // Helper to attempt update and return result.value
-    async function tryUpdate(query) {
-      const result = await db.collection("tblorders").findOneAndUpdate(
-        query,
-        {
-          $set: {
-            status,
-            updatedAt: new Date(),
-          },
+    const result = await db.collection("tblorders").findOneAndUpdate(
+      { _id: new ObjectId(orderId) },
+      {
+        $set: {
+          status,
+          updatedAt: new Date(),
         },
-        { returnDocument: "after" }
-      );
-      return result && result.value ? result.value : null;
-    }
+      },
+      { returnDocument: "after" }
+    );
 
-    let updated = null;
-
-    if (isValidObjectId(orderId)) {
-      try {
-        updated = await tryUpdate({ _id: new ObjectId(orderId) });
-      } catch (err) {
-        // conversion error - ignore and try fallback
-        console.warn("ObjectId update attempt failed:", err && err.message);
-      }
-    }
-
-    // fallback attempts
-    if (!updated) {
-      // try direct string match on _id (some code stores strings)
-      updated = await tryUpdate({ _id: orderId });
-    }
-    if (!updated) {
-      updated = await tryUpdate({ orderId: orderId });
-    }
-    if (!updated) {
-      updated = await tryUpdate({ id: orderId });
-    }
-
-    if (!updated) {
-      console.log("Order not found for id (status change):", orderId, "->", status);
+    if (!result.value) {
       return res
         .status(404)
         .json({ success: false, message: "Order not found" });
@@ -715,7 +582,7 @@ app.patch("/orders/:orderId/status", async (req, res) => {
     return res.json({
       success: true,
       message: "Order status updated",
-      order: updated,
+      order: result.value,
     });
   } catch (err) {
     console.error("PATCH /orders/:orderId/status error:", err);
@@ -782,9 +649,7 @@ app.get("/getcart/:userId", async (req, res) => {
   }
 });
 
-/* =========================
- *   ADMIN
- * ======================= */
+/* ========== ADMIN ========== */
 
 app.post("/admin/login", async (req, res) => {
   try {
@@ -846,7 +711,7 @@ app.get("/admin/orders", async (req, res) => {
 });
 
 /* =========================
- *   CATCH-ALL
+ *   CATCH-ALL (last)
  * ======================= */
 
 app.use((req, res) => {
@@ -863,7 +728,10 @@ app.use((req, res) => {
     req.path.startsWith("/customers");
 
   if (isApi) {
-    return res.status(404).json({ error: "API endpoint not found" });
+    // yahan tab aayega jab method match nahi hua (jaise GET on PATCH endpoint)
+    return res
+      .status(405)
+      .json({ error: "Method not allowed for this API endpoint" });
   }
 
   return res.status(200).json({
