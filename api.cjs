@@ -1,6 +1,4 @@
 // api.cjs (updated - full file)
-
-
 const express = require("express");
 const { MongoClient, ObjectId } = require("mongodb");
 const cors = require("cors");
@@ -25,7 +23,7 @@ app.use(
   })
 );
 
-// Simple request logger (useful for debugging; remove or comment in production)
+// request logger
 app.use((req, res, next) => {
   try {
     console.log(new Date().toISOString(), req.method, req.path);
@@ -67,6 +65,15 @@ async function getDb() {
 
 function isValidObjectId(id) {
   return typeof id === "string" && /^[0-9a-fA-F]{24}$/.test(id);
+}
+
+async function safeParseJsonResponse(res) {
+  // helper for server->internal parsing; not used widely here but kept for parity
+  try {
+    return await res.json();
+  } catch {
+    return null;
+  }
 }
 
 /* =========================
@@ -571,7 +578,17 @@ app.get("/orders/:orderId", async (req, res) => {
     const db = await getDb();
 
     if (!isValidObjectId(orderId)) {
-      return res.status(400).json({ success: false, message: "Invalid order id" });
+      // if not an ObjectId, try other lookups
+      const order = await db
+        .collection("tblorders")
+        .findOne({ $or: [{ orderId: orderId }, { id: orderId }, { _id: orderId }] });
+
+      if (!order) {
+        return res
+          .status(404)
+          .json({ success: false, message: "Order not found" });
+      }
+      return res.json({ success: true, order });
     }
 
     const order = await db
@@ -603,7 +620,7 @@ app.get("/orders/:orderId/status", async (req, res) => {
     const orderId = String(req.params.orderId || "").trim();
     const db = await getDb();
 
-    // attempt ObjectId lookup if valid
+    // try ObjectId lookup first
     if (isValidObjectId(orderId)) {
       const order = await db
         .collection("tblorders")
@@ -644,26 +661,51 @@ app.patch("/orders/:orderId/status", async (req, res) => {
       });
     }
 
-    if (!isValidObjectId(orderId)) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid order id" });
-    }
-
     const db = await getDb();
 
-    const result = await db.collection("tblorders").findOneAndUpdate(
-      { _id: new ObjectId(orderId) },
-      {
-        $set: {
-          status,
-          updatedAt: new Date(),
-        },
-      },
-      { returnDocument: "after" }
-    );
+    // Try several approaches so that PATCH works even if id format differs:
+    // 1) If valid ObjectId - update by ObjectId
+    // 2) If not found - try to update by string _id, orderId or id fields
 
-    if (!result.value) {
+    // Helper to attempt update and return result.value
+    async function tryUpdate(query) {
+      const result = await db.collection("tblorders").findOneAndUpdate(
+        query,
+        {
+          $set: {
+            status,
+            updatedAt: new Date(),
+          },
+        },
+        { returnDocument: "after" }
+      );
+      return result && result.value ? result.value : null;
+    }
+
+    let updated = null;
+
+    if (isValidObjectId(orderId)) {
+      try {
+        updated = await tryUpdate({ _id: new ObjectId(orderId) });
+      } catch (err) {
+        // conversion error - ignore and try fallback
+        console.warn("ObjectId update attempt failed:", err && err.message);
+      }
+    }
+
+    // fallback attempts
+    if (!updated) {
+      // try direct string match on _id (some code stores strings)
+      updated = await tryUpdate({ _id: orderId });
+    }
+    if (!updated) {
+      updated = await tryUpdate({ orderId: orderId });
+    }
+    if (!updated) {
+      updated = await tryUpdate({ id: orderId });
+    }
+
+    if (!updated) {
       console.log("Order not found for id (status change):", orderId, "->", status);
       return res
         .status(404)
@@ -673,7 +715,7 @@ app.patch("/orders/:orderId/status", async (req, res) => {
     return res.json({
       success: true,
       message: "Order status updated",
-      order: result.value,
+      order: updated,
     });
   } catch (err) {
     console.error("PATCH /orders/:orderId/status error:", err);
