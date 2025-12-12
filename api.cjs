@@ -23,7 +23,6 @@ app.use(
   })
 );
 
-// static files (optional)
 app.use(express.static(path.join(__dirname, "public")));
 
 /* =========================
@@ -36,14 +35,28 @@ const MONGO_URI =
 
 const DB_NAME = process.env.DB_NAME || "ishopdb";
 
-const client = new MongoClient(MONGO_URI, {});
+const client = new MongoClient(MONGO_URI, { useUnifiedTopology: true });
+let mongoConnected = false;
 
-async function getDb() {
-  if (!client.topology || !client.topology.isConnected?.()) {
+async function ensureConnected() {
+  if (!mongoConnected) {
     await client.connect();
+    mongoConnected = true;
     console.log("Mongo client connected");
   }
   return client.db(DB_NAME);
+}
+
+async function getDb() {
+  return ensureConnected();
+}
+
+/* =========================
+ *   HELPERS
+ * ======================= */
+
+function isValidObjectId(id) {
+  return typeof id === "string" && /^[0-9a-fA-F]{24}$/.test(id);
 }
 
 /* =========================
@@ -62,7 +75,7 @@ app.get("/getproducts", async (req, res) => {
   }
 });
 
-// single product by id
+// single product by id (supports numeric id, product_id, ObjectId or title)
 app.get("/products/:id", async (req, res) => {
   try {
     const rawId = req.params.id;
@@ -76,14 +89,14 @@ app.get("/products/:id", async (req, res) => {
     }
 
     // ObjectId
-    if (/^[0-9a-fA-F]{24}$/.test(rawId)) {
+    if (isValidObjectId(rawId)) {
       const doc = await db
         .collection("tblproducts")
         .findOne({ _id: new ObjectId(rawId) });
       if (doc) return res.json(doc);
     }
 
-    // string id / title
+    // string id / product_id / title
     const doc = await db.collection("tblproducts").findOne({
       $or: [{ product_id: rawId }, { id: rawId }, { title: rawId }],
     });
@@ -390,14 +403,15 @@ app.post("/createorder", async (req, res) => {
 
     const items = payload.items;
 
+    // collect ids of different possible types
     const numericIds = [];
     const objectIds = [];
     const stringIds = [];
 
     items.forEach((it) => {
       const pid = it.productId;
-      if (typeof pid === "string" && /^[0-9a-fA-F]{24}$/.test(pid)) {
-        objectIds.push(new ObjectId(pid));
+      if (isValidObjectId(String(pid))) {
+        objectIds.push(new ObjectId(String(pid)));
       } else if (!isNaN(Number(pid))) {
         numericIds.push(Number(pid));
       } else {
@@ -409,10 +423,7 @@ app.post("/createorder", async (req, res) => {
     if (objectIds.length) queryOr.push({ _id: { $in: objectIds } });
     if (numericIds.length) queryOr.push({ id: { $in: numericIds } });
     if (stringIds.length)
-      queryOr.push(
-        { id: { $in: stringIds } },
-        { product_id: { $in: stringIds } }
-      );
+      queryOr.push({ id: { $in: stringIds } }, { product_id: { $in: stringIds } }, { title: { $in: stringIds } });
 
     let dbProducts = [];
     if (queryOr.length) {
@@ -424,11 +435,13 @@ app.post("/createorder", async (req, res) => {
       dbProducts = await db.collection("tblproducts").find({}).toArray();
     }
 
+    // build map: keys are stringified _id, id, product_id
     const productMap = {};
     dbProducts.forEach((p) => {
       if (p._id) productMap[String(p._id)] = p;
       if (p.id !== undefined) productMap[String(p.id)] = p;
       if (p.product_id !== undefined) productMap[String(p.product_id)] = p;
+      if (p.title !== undefined) productMap[String(p.title)] = p;
     });
 
     let computedSubtotal = 0;
@@ -438,13 +451,26 @@ app.post("/createorder", async (req, res) => {
       const key = String(it.productId);
       const prod = productMap[key];
       if (!prod) {
-        return res.status(400).json({
-          success: false,
-          message: `Product not found: ${it.productId}`,
-        });
+        // try to find by numeric or _id more leniently
+        let found = null;
+        if (!isNaN(Number(key))) {
+          found = dbProducts.find((p) => String(p.id) === String(Number(key)));
+        }
+        if (!found && isValidObjectId(key)) {
+          found = dbProducts.find((p) => String(p._id) === key);
+        }
+        if (!found) {
+          return res.status(400).json({
+            success: false,
+            message: `Product not found: ${it.productId}`,
+          });
+        }
+        // use found as prod
+        Object.assign(prod || {}, found);
       }
-      const unitPrice = Number(prod.price || 0);
-      const qty = Number(it.qty || 1);
+
+      const unitPrice = Number((prod && (prod.price || prod.Price)) || 0);
+      const qty = Number(it.qty || it.quantity || 1);
       if (isNaN(unitPrice)) {
         return res.status(500).json({
           success: false,
@@ -454,8 +480,12 @@ app.post("/createorder", async (req, res) => {
       const lineTotal = unitPrice * qty;
       computedSubtotal += lineTotal;
 
+      // store canonical productId as the product _id (string) if available, otherwise id
+      const canonicalId = prod && prod._id ? String(prod._id) : (prod.id !== undefined ? String(prod.id) : String(it.productId));
+
       validatedItems.push({
-        productId: String(prod._id || prod.id),
+        productId: canonicalId,
+        originalProductRef: it.productId, // keep original for debugging/client if needed
         title: prod.title || prod.name || "",
         unitPrice,
         qty,
@@ -463,11 +493,19 @@ app.post("/createorder", async (req, res) => {
       });
     }
 
+    // optional subtotal verification (if frontend provided it)
+    if (payload.subtotal !== undefined) {
+      const diff = Math.abs(Number(payload.subtotal) - computedSubtotal);
+      if (diff > 0.5) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Subtotal mismatch" });
+      }
+    }
+
     const shipping = Number(payload.shipping || 0);
     const tax = Number(payload.tax || 0);
-    const total = Number(
-      payload.total || computedSubtotal + shipping + tax
-    );
+    const total = Number(payload.total || computedSubtotal + shipping + tax);
 
     const orderDoc = {
       userId: payload.userId || null,
@@ -477,7 +515,7 @@ app.post("/createorder", async (req, res) => {
       tax,
       total,
       createdAt: new Date(),
-      status: "Created", // ⚠️ frontend ke hisaab se initial status
+      status: "Created",
     };
 
     const insertRes = await db.collection("tblorders").insertOne(orderDoc);
@@ -496,7 +534,7 @@ app.post("/createorder", async (req, res) => {
   }
 });
 
-// list orders for a user (My Orders) – matches main.js: /orders/user/:userId
+// list orders for a user (My Orders)
 app.get("/orders/user/:userId", async (req, res) => {
   try {
     const userId = req.params.userId;
@@ -517,18 +555,19 @@ app.get("/orders/user/:userId", async (req, res) => {
   }
 });
 
-// get single order (optional – details page ke liye)
+// get single order (details page)
 app.get("/orders/:orderId", async (req, res) => {
   try {
     const orderId = String(req.params.orderId || "").trim();
     const db = await getDb();
 
-    let order = null;
-    if (/^[0-9a-fA-F]{24}$/.test(orderId)) {
-      order = await db
-        .collection("tblorders")
-        .findOne({ _id: new ObjectId(orderId) });
+    if (!isValidObjectId(orderId)) {
+      return res.status(400).json({ success: false, message: "Invalid order id" });
     }
+
+    const order = await db
+      .collection("tblorders")
+      .findOne({ _id: new ObjectId(orderId) });
 
     if (!order) {
       return res
@@ -559,7 +598,7 @@ app.patch("/orders/:orderId/status", async (req, res) => {
       });
     }
 
-    if (!/^[0-9a-fA-F]{24}$/.test(orderId)) {
+    if (!isValidObjectId(orderId)) {
       return res
         .status(400)
         .json({ success: false, message: "Invalid order id" });
