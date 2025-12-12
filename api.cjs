@@ -15,19 +15,15 @@ const app = express();
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
-// Allow CORS (including preflight)
 app.use(
   cors({
     origin: true,
     credentials: true,
     methods: "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS",
-    allowedHeaders: ["Content-Type", "Authorization", "Accept"],
   })
 );
-// ensure OPTIONS requests are handled (preflight)
-app.options("*", cors());
 
-// serve static files if any (public folder)
+// static files (optional)
 app.use(express.static(path.join(__dirname, "public")));
 
 /* =========================
@@ -40,35 +36,21 @@ const MONGO_URI =
 
 const DB_NAME = process.env.DB_NAME || "ishopdb";
 
-const client = new MongoClient(MONGO_URI, {
-  // options for older drivers (if needed). Remove or adjust for your driver version.
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-});
+const client = new MongoClient(MONGO_URI, {});
 
-let _db = null;
 async function getDb() {
-  if (_db) return _db;
-  try {
-    if (!client.topology || client.topology.isDestroyed) {
-      await client.connect();
-    } else if (!client.isConnected?.()) {
-      // for some versions client.isConnected may not exist; use connect anyway
-      await client.connect();
-    }
-  } catch (err) {
-    console.error("Mongo connect error:", err);
-    throw err;
+  if (!client.topology || !client.topology.isConnected?.()) {
+    await client.connect();
+    console.log("Mongo client connected");
   }
-  _db = client.db(DB_NAME);
-  console.log("Mongo client connected to", DB_NAME);
-  return _db;
+  return client.db(DB_NAME);
 }
 
 /* =========================
  *   PRODUCTS
  * ======================= */
 
+// all products
 app.get("/getproducts", async (req, res) => {
   try {
     const db = await getDb();
@@ -80,12 +62,13 @@ app.get("/getproducts", async (req, res) => {
   }
 });
 
+// single product by id
 app.get("/products/:id", async (req, res) => {
   try {
     const rawId = req.params.id;
     const db = await getDb();
 
-    // numeric id (e.g., 1, 2)
+    // numeric id
     if (!isNaN(rawId)) {
       const idNum = Number(rawId);
       const doc = await db.collection("tblproducts").findOne({ id: idNum });
@@ -100,7 +83,7 @@ app.get("/products/:id", async (req, res) => {
       if (doc) return res.json(doc);
     }
 
-    // string id / product_id / title
+    // string id / title
     const doc = await db.collection("tblproducts").findOne({
       $or: [{ product_id: rawId }, { id: rawId }, { title: rawId }],
     });
@@ -151,6 +134,7 @@ app.get("/categories/:category", async (req, res) => {
  *   CUSTOMERS
  * ======================= */
 
+// all customers (admin use)
 app.get("/getcustomers", async (req, res) => {
   try {
     const db = await getDb();
@@ -162,6 +146,7 @@ app.get("/getcustomers", async (req, res) => {
   }
 });
 
+// register customer
 app.post("/customerregister", async (req, res) => {
   try {
     const {
@@ -243,6 +228,7 @@ app.post("/customerregister", async (req, res) => {
   }
 });
 
+// login
 app.post("/login", async (req, res) => {
   try {
     const { UserId, Password } = req.body;
@@ -284,7 +270,8 @@ app.post("/login", async (req, res) => {
   }
 });
 
-/* PROFILE GET + UPDATE */
+/* ------------ PROFILE (GET + UPDATE) ------------- */
+
 app.get("/customers/:userId", async (req, res) => {
   try {
     const userId = String(req.params.userId || "").trim();
@@ -313,6 +300,8 @@ app.get("/customers/:userId", async (req, res) => {
 app.put("/customers/:userId", async (req, res) => {
   try {
     const userId = String(req.params.userId || "").trim();
+    console.log("PUT /customers/:userId =", userId, "body:", req.body);
+
     const {
       FirstName,
       LastName,
@@ -359,6 +348,7 @@ app.put("/customers/:userId", async (req, res) => {
     );
 
     if (!result.matchedCount) {
+      console.log("No customer found for UserId:", userId);
       return res
         .status(404)
         .json({ success: false, message: "User not found" });
@@ -464,7 +454,6 @@ app.post("/createorder", async (req, res) => {
       const lineTotal = unitPrice * qty;
       computedSubtotal += lineTotal;
 
-      // store productId consistently as string _id when available
       validatedItems.push({
         productId: String(prod._id || prod.id),
         title: prod.title || prod.name || "",
@@ -472,16 +461,6 @@ app.post("/createorder", async (req, res) => {
         qty,
         lineTotal,
       });
-    }
-
-    // optional client subtotal validation
-    if (payload.subtotal !== undefined) {
-      const diff = Math.abs(Number(payload.subtotal) - computedSubtotal);
-      if (diff > 0.5) {
-        return res
-          .status(400)
-          .json({ success: false, message: "Subtotal mismatch" });
-      }
     }
 
     const shipping = Number(payload.shipping || 0);
@@ -498,7 +477,7 @@ app.post("/createorder", async (req, res) => {
       tax,
       total,
       createdAt: new Date(),
-      status: "Created", // initial status
+      status: "Created", // ⚠️ frontend ke hisaab se initial status
     };
 
     const insertRes = await db.collection("tblorders").insertOne(orderDoc);
@@ -517,7 +496,7 @@ app.post("/createorder", async (req, res) => {
   }
 });
 
-// list orders for a user (My Orders)
+// list orders for a user (My Orders) – matches main.js: /orders/user/:userId
 app.get("/orders/user/:userId", async (req, res) => {
   try {
     const userId = req.params.userId;
@@ -538,7 +517,7 @@ app.get("/orders/user/:userId", async (req, res) => {
   }
 });
 
-// get single order (details)
+// get single order (optional – details page ke liye)
 app.get("/orders/:orderId", async (req, res) => {
   try {
     const orderId = String(req.params.orderId || "").trim();
@@ -560,34 +539,6 @@ app.get("/orders/:orderId", async (req, res) => {
     return res.json({ success: true, order });
   } catch (err) {
     console.error("GET /orders/:orderId error:", err);
-    return res
-      .status(500)
-      .json({ success: false, message: "Failed to fetch order" });
-  }
-});
-
-// helpful: allow GET /orders/:orderId/status to retrieve order (debug / browser)
-app.get("/orders/:orderId/status", async (req, res) => {
-  try {
-    const orderId = String(req.params.orderId || "").trim();
-    const db = await getDb();
-
-    let order = null;
-    if (/^[0-9a-fA-F]{24}$/.test(orderId)) {
-      order = await db
-        .collection("tblorders")
-        .findOne({ _id: new ObjectId(orderId) });
-    }
-
-    if (!order) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Order not found" });
-    }
-
-    return res.json({ success: true, order });
-  } catch (err) {
-    console.error("GET /orders/:orderId/status error:", err);
     return res
       .status(500)
       .json({ success: false, message: "Failed to fetch order" });
@@ -628,6 +579,7 @@ app.patch("/orders/:orderId/status", async (req, res) => {
     );
 
     if (!result.value) {
+      console.log("Order not found for id (status change):", orderId, "->", status);
       return res
         .status(404)
         .json({ success: false, message: "Order not found" });
@@ -799,5 +751,5 @@ app.use((req, res) => {
 
 const PORT = process.env.PORT || 4400;
 app.listen(PORT, () =>
-  console.log(`API Starter listening on port ${PORT}`)
+  console.log(`API Starter http://127.0.0.1:${PORT}`)
 );
