@@ -23,7 +23,7 @@ app.use(
   })
 );
 
-// static files (optional)
+// serve a simple public folder if you have static html used in local dev
 app.use(express.static(path.join(__dirname, "public")));
 
 /* =========================
@@ -36,63 +36,78 @@ const MONGO_URI =
 
 const DB_NAME = process.env.DB_NAME || "ishopdb";
 
-const client = new MongoClient(MONGO_URI, {});
+const client = new MongoClient(MONGO_URI, {
+  // optional settings
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+});
 
+let dbInstance = null;
 async function getDb() {
-  if (!client.topology || !client.topology.isConnected?.()) {
-    await client.connect();
-    console.log("Mongo client connected");
+  if (dbInstance) return dbInstance;
+  await client.connect();
+  dbInstance = client.db(DB_NAME);
+  console.log("Mongo client connected");
+  return dbInstance;
+}
+
+/* =========================
+ *   UTIL
+ * ======================= */
+
+function safeJson(res, p) {
+  try {
+    return res.json(p);
+  } catch {
+    return res.status(500).json({ error: "Response write failed" });
   }
-  return client.db(DB_NAME);
 }
 
 /* =========================
  *   PRODUCTS
  * ======================= */
 
-// all products
 app.get("/getproducts", async (req, res) => {
   try {
     const db = await getDb();
     const documents = await db.collection("tblproducts").find({}).toArray();
-    res.json(documents);
+    return safeJson(res, documents);
   } catch (err) {
     console.error("GET /getproducts error:", err);
-    res.status(500).json({ error: "Server error" });
+    return res.status(500).json({ error: "Server error" });
   }
 });
 
-// single product by id
 app.get("/products/:id", async (req, res) => {
   try {
-    const rawId = req.params.id;
+    const rawId = String(req.params.id || "");
     const db = await getDb();
 
     // numeric id
     if (!isNaN(rawId)) {
       const idNum = Number(rawId);
       const doc = await db.collection("tblproducts").findOne({ id: idNum });
-      if (doc) return res.json(doc);
+      if (doc) return safeJson(res, doc);
     }
 
-    // ObjectId
+    // ObjectId (24 hex)
     if (/^[0-9a-fA-F]{24}$/.test(rawId)) {
       const doc = await db
         .collection("tblproducts")
         .findOne({ _id: new ObjectId(rawId) });
-      if (doc) return res.json(doc);
+      if (doc) return safeJson(res, doc);
     }
 
-    // string id / title
+    // string matches
     const doc = await db.collection("tblproducts").findOne({
       $or: [{ product_id: rawId }, { id: rawId }, { title: rawId }],
     });
 
     if (!doc) return res.status(404).json({ error: "Product not found" });
-    return res.json(doc);
+    return safeJson(res, doc);
   } catch (err) {
     console.error("GET /products/:id error:", err);
-    res.status(500).json({ error: "Server error" });
+    return res.status(500).json({ error: "Server error" });
   }
 });
 
@@ -104,10 +119,10 @@ app.get("/categories", async (req, res) => {
   try {
     const db = await getDb();
     const documents = await db.collection("tblcategories").find({}).toArray();
-    res.json(documents);
+    return safeJson(res, documents);
   } catch (err) {
     console.error("GET /categories error:", err);
-    res.status(500).json({ error: "Server error" });
+    return res.status(500).json({ error: "Server error" });
   }
 });
 
@@ -123,10 +138,10 @@ app.get("/categories/:category", async (req, res) => {
       })
       .toArray();
 
-    res.json(documents);
+    return safeJson(res, documents);
   } catch (err) {
     console.error("GET /categories/:category error:", err);
-    res.status(500).json({ error: "Server error" });
+    return res.status(500).json({ error: "Server error" });
   }
 });
 
@@ -134,19 +149,17 @@ app.get("/categories/:category", async (req, res) => {
  *   CUSTOMERS
  * ======================= */
 
-// all customers (admin use)
 app.get("/getcustomers", async (req, res) => {
   try {
     const db = await getDb();
     const documents = await db.collection("tblcustomers").find({}).toArray();
-    res.json(documents);
+    return safeJson(res, documents);
   } catch (err) {
     console.error("GET /getcustomers error:", err);
-    res.status(500).json({ error: "Server error" });
+    return res.status(500).json({ error: "Server error" });
   }
 });
 
-// register customer
 app.post("/customerregister", async (req, res) => {
   try {
     const {
@@ -177,7 +190,7 @@ app.post("/customerregister", async (req, res) => {
         .json({ success: false, message: "Please enter a valid email" });
     }
 
-    if (Password.length < 6) {
+    if (String(Password).length < 6) {
       return res.status(400).json({
         success: false,
         message: "Password must be at least 6 characters long",
@@ -196,7 +209,7 @@ app.post("/customerregister", async (req, res) => {
         .json({ success: false, message: "UserId already exists" });
     }
 
-    const hashedPassword = await bcrypt.hash(Password, 10);
+    const hashedPassword = await bcrypt.hash(String(Password), 10);
 
     const data = {
       UserId,
@@ -222,17 +235,15 @@ app.post("/customerregister", async (req, res) => {
     });
   } catch (err) {
     console.error("POST /customerregister error:", err);
-    res
+    return res
       .status(500)
       .json({ success: false, message: "Registration failed" });
   }
 });
 
-// login
 app.post("/login", async (req, res) => {
   try {
     const { UserId, Password } = req.body;
-
     if (!UserId || !Password) {
       return res
         .status(400)
@@ -264,13 +275,13 @@ app.post("/login", async (req, res) => {
     });
   } catch (err) {
     console.error("POST /login error:", err);
-    res
+    return res
       .status(500)
       .json({ success: false, message: "Login failed. Server error" });
   }
 });
 
-/* ------------ PROFILE (GET + UPDATE) ------------- */
+/* ========== PROFILE (GET + UPDATE) ========== */
 
 app.get("/customers/:userId", async (req, res) => {
   try {
@@ -291,7 +302,7 @@ app.get("/customers/:userId", async (req, res) => {
     return res.json({ success: true, customer });
   } catch (err) {
     console.error("GET /customers/:userId error:", err);
-    res
+    return res
       .status(500)
       .json({ success: false, message: "Error fetching profile" });
   }
@@ -300,8 +311,6 @@ app.get("/customers/:userId", async (req, res) => {
 app.put("/customers/:userId", async (req, res) => {
   try {
     const userId = String(req.params.userId || "").trim();
-    console.log("PUT /customers/:userId =", userId, "body:", req.body);
-
     const {
       FirstName,
       LastName,
@@ -348,7 +357,6 @@ app.put("/customers/:userId", async (req, res) => {
     );
 
     if (!result.matchedCount) {
-      console.log("No customer found for UserId:", userId);
       return res
         .status(404)
         .json({ success: false, message: "User not found" });
@@ -376,7 +384,12 @@ app.put("/customers/:userId", async (req, res) => {
  *   ORDERS
  * ======================= */
 
-// Create order
+/*
+  Create order:
+  - expects payload.items = array of items with productId (id/_id/product_id) and qty
+  - compute subtotal from db product prices (defence against tampered client)
+*/
+
 app.post("/createorder", async (req, res) => {
   try {
     const db = await getDb();
@@ -390,6 +403,7 @@ app.post("/createorder", async (req, res) => {
 
     const items = payload.items;
 
+    // classify ids we received
     const numericIds = [];
     const objectIds = [];
     const stringIds = [];
@@ -400,7 +414,7 @@ app.post("/createorder", async (req, res) => {
         objectIds.push(new ObjectId(pid));
       } else if (!isNaN(Number(pid))) {
         numericIds.push(Number(pid));
-      } else {
+      } else if (pid !== undefined && pid !== null) {
         stringIds.push(String(pid));
       }
     });
@@ -409,17 +423,11 @@ app.post("/createorder", async (req, res) => {
     if (objectIds.length) queryOr.push({ _id: { $in: objectIds } });
     if (numericIds.length) queryOr.push({ id: { $in: numericIds } });
     if (stringIds.length)
-      queryOr.push(
-        { id: { $in: stringIds } },
-        { product_id: { $in: stringIds } }
-      );
+      queryOr.push({ product_id: { $in: stringIds } }, { id: { $in: stringIds } });
 
     let dbProducts = [];
     if (queryOr.length) {
-      dbProducts = await db
-        .collection("tblproducts")
-        .find({ $or: queryOr })
-        .toArray();
+      dbProducts = await db.collection("tblproducts").find({ $or: queryOr }).toArray();
     } else {
       dbProducts = await db.collection("tblproducts").find({}).toArray();
     }
@@ -444,18 +452,18 @@ app.post("/createorder", async (req, res) => {
         });
       }
       const unitPrice = Number(prod.price || 0);
-      const qty = Number(it.qty || 1);
       if (isNaN(unitPrice)) {
         return res.status(500).json({
           success: false,
           message: "Server product price error",
         });
       }
+      const qty = Number(it.qty || 1);
       const lineTotal = unitPrice * qty;
       computedSubtotal += lineTotal;
 
       validatedItems.push({
-        productId: String(prod._id || prod.id),
+        productId: String(prod._id || prod.id || prod.product_id),
         title: prod.title || prod.name || "",
         unitPrice,
         qty,
@@ -463,11 +471,19 @@ app.post("/createorder", async (req, res) => {
       });
     }
 
+    // optional - if client passed subtotal ensure it's close to computed
+    if (payload.subtotal !== undefined) {
+      const diff = Math.abs(Number(payload.subtotal) - computedSubtotal);
+      if (diff > 0.5) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Subtotal mismatch" });
+      }
+    }
+
     const shipping = Number(payload.shipping || 0);
     const tax = Number(payload.tax || 0);
-    const total = Number(
-      payload.total || computedSubtotal + shipping + tax
-    );
+    const total = Number(payload.total || computedSubtotal + shipping + tax);
 
     const orderDoc = {
       userId: payload.userId || null,
@@ -477,7 +493,7 @@ app.post("/createorder", async (req, res) => {
       tax,
       total,
       createdAt: new Date(),
-      status: "Created", // ⚠️ frontend ke hisaab se initial status
+      status: "Created",
     };
 
     const insertRes = await db.collection("tblorders").insertOne(orderDoc);
@@ -496,28 +512,22 @@ app.post("/createorder", async (req, res) => {
   }
 });
 
-// list orders for a user (My Orders) – matches main.js: /orders/user/:userId
+// list (user orders) — used by frontend
 app.get("/orders/user/:userId", async (req, res) => {
   try {
-    const userId = req.params.userId;
+    const userId = String(req.params.userId || "");
     const db = await getDb();
 
-    const orders = await db
-      .collection("tblorders")
-      .find({ userId })
-      .sort({ createdAt: -1 })
-      .toArray();
+    const orders = await db.collection("tblorders").find({ userId }).sort({ createdAt: -1 }).toArray();
 
-    res.json({ success: true, orders });
+    return res.json({ success: true, orders });
   } catch (err) {
     console.error("GET /orders/user/:userId error:", err);
-    res
-      .status(500)
-      .json({ success: false, message: "Failed to load orders" });
+    return res.status(500).json({ success: false, message: "Failed to load orders" });
   }
 });
 
-// get single order (optional – details page ke liye)
+// get single order by _id
 app.get("/orders/:orderId", async (req, res) => {
   try {
     const orderId = String(req.params.orderId || "").trim();
@@ -525,110 +535,64 @@ app.get("/orders/:orderId", async (req, res) => {
 
     let order = null;
     if (/^[0-9a-fA-F]{24}$/.test(orderId)) {
-      order = await db
-        .collection("tblorders")
-        .findOne({ _id: new ObjectId(orderId) });
+      order = await db.collection("tblorders").findOne({ _id: new ObjectId(orderId) });
+    } else {
+      // not an ObjectId -> maybe stored as string id
+      order = await db.collection("tblorders").findOne({ _id: orderId });
     }
 
     if (!order) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Order not found" });
+      return res.status(404).json({ success: false, message: "Order not found" });
     }
 
     return res.json({ success: true, order });
   } catch (err) {
     console.error("GET /orders/:orderId error:", err);
-    return res
-      .status(500)
-      .json({ success: false, message: "Failed to fetch order" });
+    return res.status(500).json({ success: false, message: "Failed to fetch order" });
   }
 });
 
-// Robust PATCH handler for updating order status
-app.patch("/orders/:orderId/status", async (req, res) => {
+/*
+  Update status endpoint.
+  Accept PATCH and PUT for compatibility.
+*/
+async function updateOrderStatusHandler(req, res) {
   try {
-    console.log("DEBUG: PATCH /orders/:orderId/status called. params:", req.params, "body:", req.body);
-
-    const rawOrderId = String(req.params.orderId || "").trim();
+    const orderId = String(req.params.orderId || "").trim();
     const { status } = req.body || {};
 
     const allowed = ["Created", "Processing", "Shipped", "Delivered", "Cancelled"];
-    if (!status || !allowed.includes(status)) {
+    if (!allowed.includes(status)) {
       return res.status(400).json({ success: false, message: "Invalid status value" });
-    }
-
-    if (!rawOrderId) {
-      return res.status(400).json({ success: false, message: "Missing order id" });
     }
 
     const db = await getDb();
 
-    // Build multiple candidate queries to try (ObjectId, numeric id, string id)
-    const orQueries = [];
-
-    // 1) if looks like a 24-hex ObjectId, try that first
-    if (/^[0-9a-fA-F]{24}$/.test(rawOrderId)) {
-      try {
-        orQueries.push({ _id: new ObjectId(rawOrderId) });
-      } catch (e) {
-        // ignore
-      }
-    }
-
-    // 2) try exact string match on _id (in case _id stored as string)
-    orQueries.push({ _id: rawOrderId });
-
-    // 3) if numeric-like, try numeric id field
-    if (!isNaN(Number(rawOrderId))) {
-      orQueries.push({ id: Number(rawOrderId) });
-    }
-
-    // 4) try string id fields that some DBs use
-    orQueries.push({ id: rawOrderId });
-    orQueries.push({ orderId: rawOrderId });
-    orQueries.push({ order_id: rawOrderId });
-
-    // Remove duplicate queries (simple)
-    const uniqueOr = [];
-    const seen = new Set();
-    for (const q of orQueries) {
-      const key = JSON.stringify(q);
-      if (!seen.has(key)) {
-        seen.add(key);
-        uniqueOr.push(q);
-      }
-    }
-
-    // Try to update using $or
-    const query = { $or: uniqueOr };
+    // try to match either ObjectId or string _id
+    const filter = /^[0-9a-fA-F]{24}$/.test(orderId) ? { _id: new ObjectId(orderId) } : { _id: orderId };
 
     const result = await db.collection("tblorders").findOneAndUpdate(
-      query,
-      {
-        $set: {
-          status,
-          updatedAt: new Date(),
-        },
-      },
+      filter,
+      { $set: { status, updatedAt: new Date() } },
       { returnDocument: "after" }
     );
 
     if (!result.value) {
-      console.log("DEBUG: Order not found for queries:", JSON.stringify(uniqueOr));
+      console.log("Order not found for id (status change):", orderId, "->", status);
       return res.status(404).json({ success: false, message: "Order not found" });
     }
 
-    return res.json({
-      success: true,
-      message: "Order status updated",
-      order: result.value,
-    });
+    return res.json({ success: true, message: "Order status updated", order: result.value });
   } catch (err) {
-    console.error("PATCH /orders/:orderId/status error:", err);
+    console.error("Update order status error:", err);
     return res.status(500).json({ success: false, message: "Failed to update status" });
   }
-});
+}
+
+app.patch("/orders/:orderId/status", updateOrderStatusHandler);
+app.put("/orders/:orderId/status", updateOrderStatusHandler);
+// also allow POST for clients that cannot do PATCH
+app.post("/orders/:orderId/status", updateOrderStatusHandler);
 
 /* =========================
  *   CART
@@ -640,34 +604,21 @@ app.post("/addtocart", async (req, res) => {
     const { userId, productId, qty } = req.body;
 
     if (!userId || !productId) {
-      return res.status(400).json({
-        success: false,
-        message: "userId and productId required",
-      });
+      return res.status(400).json({ success: false, message: "userId and productId required" });
     }
 
-    const existing = await db
-      .collection("tblshoppingcart")
-      .findOne({ userId, productId });
+    const existing = await db.collection("tblshoppingcart").findOne({ userId, productId });
 
     if (existing) {
-      await db.collection("tblshoppingcart").updateOne(
-        { userId, productId },
-        { $set: { qty: existing.qty + (qty || 1) } }
-      );
+      await db.collection("tblshoppingcart").updateOne({ userId, productId }, { $set: { qty: (existing.qty || 0) + (qty || 1) } });
     } else {
-      await db.collection("tblshoppingcart").insertOne({
-        userId,
-        productId,
-        qty: qty || 1,
-        addedAt: new Date(),
-      });
+      await db.collection("tblshoppingcart").insertOne({ userId, productId, qty: qty || 1, addedAt: new Date() });
     }
 
-    res.json({ success: true, message: "Cart updated" });
+    return res.json({ success: true, message: "Cart updated" });
   } catch (err) {
     console.error("POST /addtocart error:", err);
-    res.status(500).json({ success: false, message: "Server error" });
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
@@ -675,15 +626,11 @@ app.get("/getcart/:userId", async (req, res) => {
   try {
     const db = await getDb();
     const userId = req.params.userId;
-
-    const cart = await db
-      .collection("tblshoppingcart")
-      .find({ userId })
-      .toArray();
-    res.json(cart);
+    const cart = await db.collection("tblshoppingcart").find({ userId }).toArray();
+    return safeJson(res, cart);
   } catch (err) {
     console.error("GET /getcart error:", err);
-    res.status(500).json({ success: false, message: "Server error" });
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
@@ -694,34 +641,21 @@ app.get("/getcart/:userId", async (req, res) => {
 app.post("/admin/login", async (req, res) => {
   try {
     const { username, password } = req.body;
-
     if (!username || !password) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Username and Password required" });
+      return res.status(400).json({ success: false, message: "Username and Password required" });
     }
 
     const db = await getDb();
-    const admin = await db
-      .collection("tbladmins")
-      .findOne({ username: username });
+    const admin = await db.collection("tbladmins").findOne({ username: username });
 
     if (!admin || admin.password !== password) {
-      return res
-        .status(401)
-        .json({ success: false, message: "Invalid admin credentials" });
+      return res.status(401).json({ success: false, message: "Invalid admin credentials" });
     }
 
-    return res.json({
-      success: true,
-      message: "Admin login success",
-      username: admin.username,
-    });
+    return res.json({ success: true, message: "Admin login success", username: admin.username });
   } catch (err) {
     console.error("POST /admin/login error:", err);
-    res
-      .status(500)
-      .json({ success: false, message: "Admin login failed" });
+    return res.status(500).json({ success: false, message: "Admin login failed" });
   }
 });
 
@@ -729,24 +663,12 @@ app.get("/admin/orders", async (req, res) => {
   try {
     const db = await getDb();
     const status = req.query.status;
-
-    const query =
-      status && status !== "All"
-        ? { status: status }
-        : {};
-
-    const orders = await db
-      .collection("tblorders")
-      .find(query)
-      .sort({ createdAt: -1 })
-      .toArray();
-
+    const query = status && status !== "All" ? { status: status } : {};
+    const orders = await db.collection("tblorders").find(query).sort({ createdAt: -1 }).toArray();
     return res.json({ success: true, orders });
   } catch (err) {
     console.error("GET /admin/orders error:", err);
-    res
-      .status(500)
-      .json({ success: false, message: "Failed to load admin orders" });
+    return res.status(500).json({ success: false, message: "Failed to load admin orders" });
   }
 });
 
@@ -754,6 +676,11 @@ app.get("/admin/orders", async (req, res) => {
  *   CATCH-ALL
  * ======================= */
 
+/*
+  Make sure we don't accidentally swallow real API routes.
+  If the path starts with an API prefix but none of the above matched,
+  return 404 with API message. Otherwise return a friendly JSON.
+*/
 app.use((req, res) => {
   const isApi =
     req.path.startsWith("/products") ||
@@ -771,6 +698,7 @@ app.use((req, res) => {
     return res.status(404).json({ error: "API endpoint not found" });
   }
 
+  // Non-API: helpful message
   return res.status(200).json({
     message: "Shopping Backend API is running. Frontend is deployed separately.",
     path: req.path,
@@ -782,6 +710,4 @@ app.use((req, res) => {
  * ======================= */
 
 const PORT = process.env.PORT || 4400;
-app.listen(PORT, () =>
-  console.log(`API Starter http://127.0.0.1:${PORT}`)
-);
+app.listen(PORT, () => console.log(`API Starter http://127.0.0.1:${PORT}`));
