@@ -23,7 +23,7 @@ app.use(
   })
 );
 
-// static just in case you serve images etc.
+// static (optional)
 app.use(express.static(path.join(__dirname, "public")));
 
 /* =========================
@@ -44,6 +44,10 @@ async function getDb() {
     console.log("Mongo client connected");
   }
   return client.db(DB_NAME);
+}
+
+function isValidObjectId(id) {
+  return typeof id === "string" && /^[0-9a-fA-F]{24}$/.test(id);
 }
 
 /* =========================
@@ -81,7 +85,7 @@ app.get("/products/:id", async (req, res) => {
       if (doc) return res.json(doc);
     }
 
-    // any string field
+    // string fields
     const doc = await db.collection("tblproducts").findOne({
       $or: [{ product_id: rawId }, { id: rawId }, { title: rawId }],
     });
@@ -371,7 +375,6 @@ app.put("/customers/:userId", async (req, res) => {
  *   ORDERS
  * ======================= */
 
-// Create order
 app.post("/createorder", async (req, res) => {
   try {
     const db = await getDb();
@@ -406,7 +409,8 @@ app.post("/createorder", async (req, res) => {
     if (stringIds.length)
       queryOr.push(
         { id: { $in: stringIds } },
-        { product_id: { $in: stringIds } }
+        { product_id: { $in: stringIds } },
+        { title: { $in: stringIds } }
       );
 
     let dbProducts = [];
@@ -424,6 +428,7 @@ app.post("/createorder", async (req, res) => {
       if (p._id) productMap[String(p._id)] = p;
       if (p.id !== undefined) productMap[String(p.id)] = p;
       if (p.product_id !== undefined) productMap[String(p.product_id)] = p;
+      if (p.title !== undefined) productMap[String(p.title)] = p;
     });
 
     let computedSubtotal = 0;
@@ -431,15 +436,24 @@ app.post("/createorder", async (req, res) => {
 
     for (const it of items) {
       const key = String(it.productId);
-      const prod = productMap[key];
+      let prod = productMap[key];
+      if (!prod) {
+        prod = dbProducts.find((p) => String(p._id) === key || String(p.id) === key || String(p.product_id) === key || String(p.title) === key);
+      }
       if (!prod) {
         return res.status(400).json({
           success: false,
           message: `Product not found: ${it.productId}`,
         });
       }
-      const unitPrice = Number(prod.price || 0);
+      const unitPrice = Number(prod.price || prod.Price || 0);
       const qty = Number(it.qty || 1);
+      if (isNaN(unitPrice)) {
+        return res.status(500).json({
+          success: false,
+          message: "Server product price error",
+        });
+      }
       const lineTotal = unitPrice * qty;
       computedSubtotal += lineTotal;
 
@@ -454,9 +468,7 @@ app.post("/createorder", async (req, res) => {
 
     const shipping = Number(payload.shipping || 0);
     const tax = Number(payload.tax || 0);
-    const total = Number(
-      payload.total || computedSubtotal + shipping + tax
-    );
+    const total = Number(payload.total || computedSubtotal + shipping + tax);
 
     const orderDoc = {
       userId: payload.userId || null,
@@ -485,8 +497,8 @@ app.post("/createorder", async (req, res) => {
   }
 });
 
-// list orders for a user (My Orders)
-app.get("/orders/user/:userId", async (req, res) => {
+// List orders for a user (my orders) — route used by frontend
+app.get("/orders/:userId", async (req, res) => {
   try {
     const userId = req.params.userId;
     const db = await getDb();
@@ -499,38 +511,35 @@ app.get("/orders/user/:userId", async (req, res) => {
 
     res.json({ success: true, orders });
   } catch (err) {
-    console.error("GET /orders/user/:userId error:", err);
+    console.error("GET /orders/:userId error:", err);
     res
       .status(500)
       .json({ success: false, message: "Failed to load orders" });
   }
 });
 
-// get single order
-app.get("/orders/:orderId", async (req, res) => {
+// Get single order by orderId
+app.get("/order/:orderId", async (req, res) => {
   try {
     const orderId = String(req.params.orderId || "").trim();
     const db = await getDb();
 
-    let order = null;
-    if (/^[0-9a-fA-F]{24}$/.test(orderId)) {
-      order = await db
-        .collection("tblorders")
-        .findOne({ _id: new ObjectId(orderId) });
+    if (!isValidObjectId(orderId)) {
+      return res.status(400).json({ success: false, message: "Invalid order id" });
     }
 
+    const order = await db
+      .collection("tblorders")
+      .findOne({ _id: new ObjectId(orderId) });
+
     if (!order) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Order not found" });
+      return res.status(404).json({ success: false, message: "Order not found" });
     }
 
     return res.json({ success: true, order });
   } catch (err) {
-    console.error("GET /orders/:orderId error:", err);
-    return res
-      .status(500)
-      .json({ success: false, message: "Failed to fetch order" });
+    console.error("GET /order/:orderId error:", err);
+    return res.status(500).json({ success: false, message: "Failed to fetch order" });
   }
 });
 
@@ -540,55 +549,31 @@ app.patch("/orders/:orderId/status", async (req, res) => {
     const orderId = String(req.params.orderId || "").trim();
     const { status } = req.body || {};
 
-    const allowed = [
-      "Created",
-      "Processing",
-      "Shipped",
-      "Delivered",
-      "Cancelled",
-    ];
-    if (!allowed.includes(status)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid status value",
-      });
+    const allowed = ["Created", "Processing", "Shipped", "Delivered", "Cancelled"];
+    if (!status || !allowed.includes(status)) {
+      return res.status(400).json({ success: false, message: "Invalid status value" });
     }
 
-    if (!/^[0-9a-fA-F]{24}$/.test(orderId)) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid order id" });
+    if (!isValidObjectId(orderId)) {
+      return res.status(400).json({ success: false, message: "Invalid order id" });
     }
 
     const db = await getDb();
 
     const result = await db.collection("tblorders").findOneAndUpdate(
       { _id: new ObjectId(orderId) },
-      {
-        $set: {
-          status,
-          updatedAt: new Date(),
-        },
-      },
+      { $set: { status, updatedAt: new Date() } },
       { returnDocument: "after" }
     );
 
     if (!result.value) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Order not found" });
+      return res.status(404).json({ success: false, message: "Order not found" });
     }
 
-    return res.json({
-      success: true,
-      message: "Order status updated",
-      order: result.value,
-    });
+    return res.json({ success: true, message: "Order status updated", order: result.value });
   } catch (err) {
     console.error("PATCH /orders/:orderId/status error:", err);
-    return res
-      .status(500)
-      .json({ success: false, message: "Failed to update status" });
+    return res.status(500).json({ success: false, message: "Failed to update status" });
   }
 });
 
@@ -602,28 +587,15 @@ app.post("/addtocart", async (req, res) => {
     const { userId, productId, qty } = req.body;
 
     if (!userId || !productId) {
-      return res.status(400).json({
-        success: false,
-        message: "userId and productId required",
-      });
+      return res.status(400).json({ success: false, message: "userId and productId required" });
     }
 
-    const existing = await db
-      .collection("tblshoppingcart")
-      .findOne({ userId, productId });
+    const existing = await db.collection("tblshoppingcart").findOne({ userId, productId });
 
     if (existing) {
-      await db.collection("tblshoppingcart").updateOne(
-        { userId, productId },
-        { $set: { qty: existing.qty + (qty || 1) } }
-      );
+      await db.collection("tblshoppingcart").updateOne({ userId, productId }, { $set: { qty: existing.qty + (qty || 1) } });
     } else {
-      await db.collection("tblshoppingcart").insertOne({
-        userId,
-        productId,
-        qty: qty || 1,
-        addedAt: new Date(),
-      });
+      await db.collection("tblshoppingcart").insertOne({ userId, productId, qty: qty || 1, addedAt: new Date() });
     }
 
     res.json({ success: true, message: "Cart updated" });
@@ -638,10 +610,7 @@ app.get("/getcart/:userId", async (req, res) => {
     const db = await getDb();
     const userId = req.params.userId;
 
-    const cart = await db
-      .collection("tblshoppingcart")
-      .find({ userId })
-      .toArray();
+    const cart = await db.collection("tblshoppingcart").find({ userId }).toArray();
     res.json(cart);
   } catch (err) {
     console.error("GET /getcart error:", err);
@@ -654,34 +623,16 @@ app.get("/getcart/:userId", async (req, res) => {
 app.post("/admin/login", async (req, res) => {
   try {
     const { username, password } = req.body;
-
-    if (!username || !password) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Username and Password required" });
-    }
+    if (!username || !password) return res.status(400).json({ success: false, message: "Username and Password required" });
 
     const db = await getDb();
-    const admin = await db
-      .collection("tbladmins")
-      .findOne({ username: username });
+    const admin = await db.collection("tbladmins").findOne({ username });
+    if (!admin || admin.password !== password) return res.status(401).json({ success: false, message: "Invalid admin credentials" });
 
-    if (!admin || admin.password !== password) {
-      return res
-        .status(401)
-        .json({ success: false, message: "Invalid admin credentials" });
-    }
-
-    return res.json({
-      success: true,
-      message: "Admin login success",
-      username: admin.username,
-    });
+    return res.json({ success: true, message: "Admin login success", username: admin.username });
   } catch (err) {
     console.error("POST /admin/login error:", err);
-    res
-      .status(500)
-      .json({ success: false, message: "Admin login failed" });
+    res.status(500).json({ success: false, message: "Admin login failed" });
   }
 });
 
@@ -689,29 +640,17 @@ app.get("/admin/orders", async (req, res) => {
   try {
     const db = await getDb();
     const status = req.query.status;
-
-    const query =
-      status && status !== "All"
-        ? { status: status }
-        : {};
-
-    const orders = await db
-      .collection("tblorders")
-      .find(query)
-      .sort({ createdAt: -1 })
-      .toArray();
-
+    const query = status && status !== "All" ? { status } : {};
+    const orders = await db.collection("tblorders").find(query).sort({ createdAt: -1 }).toArray();
     return res.json({ success: true, orders });
   } catch (err) {
     console.error("GET /admin/orders error:", err);
-    res
-      .status(500)
-      .json({ success: false, message: "Failed to load admin orders" });
+    res.status(500).json({ success: false, message: "Failed to load admin orders" });
   }
 });
 
 /* =========================
- *   CATCH-ALL (last)
+ *   CATCH-ALL
  * ======================= */
 
 app.use((req, res) => {
@@ -725,13 +664,11 @@ app.use((req, res) => {
     req.path.startsWith("/addtocart") ||
     req.path.startsWith("/login") ||
     req.path.startsWith("/orders") ||
-    req.path.startsWith("/customers");
+    req.path.startsWith("/customers") ||
+    req.path.startsWith("/getcart");
 
   if (isApi) {
-    // yahan tab aayega jab method match nahi hua (jaise GET on PATCH endpoint)
-    return res
-      .status(405)
-      .json({ error: "Method not allowed for this API endpoint" });
+    return res.status(404).json({ error: "API endpoint not found" });
   }
 
   return res.status(200).json({
@@ -745,6 +682,4 @@ app.use((req, res) => {
  * ======================= */
 
 const PORT = process.env.PORT || 4400;
-app.listen(PORT, () =>
-  console.log(`API Starter http://127.0.0.1:${PORT}`)
-);
+app.listen(PORT, () => console.log(`API Starter http://127.0.0.1:${PORT}`));
