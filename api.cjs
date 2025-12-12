@@ -548,6 +548,9 @@ app.get("/orders/:orderId", async (req, res) => {
 // Update order status (Created / Processing / Shipped / Delivered / Cancelled)
 app.patch("/orders/:orderId/status", async (req, res) => {
   try {
+    // === DEBUG LOG: увидеть что приходит на сервер ===
+    console.log("DEBUG: PATCH /orders/:orderId/status called. params:", req.params, "body:", req.body);
+
     const orderId = String(req.params.orderId || "").trim();
     const { status } = req.body || {};
 
