@@ -545,33 +545,66 @@ app.get("/orders/:orderId", async (req, res) => {
   }
 });
 
-// Update order status (Created / Processing / Shipped / Delivered / Cancelled)
+// Robust PATCH handler for updating order status
 app.patch("/orders/:orderId/status", async (req, res) => {
   try {
-    // === DEBUG LOG: увидеть что приходит на сервер ===
     console.log("DEBUG: PATCH /orders/:orderId/status called. params:", req.params, "body:", req.body);
 
-    const orderId = String(req.params.orderId || "").trim();
+    const rawOrderId = String(req.params.orderId || "").trim();
     const { status } = req.body || {};
 
     const allowed = ["Created", "Processing", "Shipped", "Delivered", "Cancelled"];
-    if (!allowed.includes(status)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid status value",
-      });
+    if (!status || !allowed.includes(status)) {
+      return res.status(400).json({ success: false, message: "Invalid status value" });
     }
 
-    if (!/^[0-9a-fA-F]{24}$/.test(orderId)) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid order id" });
+    if (!rawOrderId) {
+      return res.status(400).json({ success: false, message: "Missing order id" });
     }
 
     const db = await getDb();
 
+    // Build multiple candidate queries to try (ObjectId, numeric id, string id)
+    const orQueries = [];
+
+    // 1) if looks like a 24-hex ObjectId, try that first
+    if (/^[0-9a-fA-F]{24}$/.test(rawOrderId)) {
+      try {
+        orQueries.push({ _id: new ObjectId(rawOrderId) });
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    // 2) try exact string match on _id (in case _id stored as string)
+    orQueries.push({ _id: rawOrderId });
+
+    // 3) if numeric-like, try numeric id field
+    if (!isNaN(Number(rawOrderId))) {
+      orQueries.push({ id: Number(rawOrderId) });
+    }
+
+    // 4) try string id fields that some DBs use
+    orQueries.push({ id: rawOrderId });
+    orQueries.push({ orderId: rawOrderId });
+    orQueries.push({ order_id: rawOrderId });
+
+    // Remove duplicate queries (simple)
+    const uniqueOr = [];
+    const seen = new Set();
+    for (const q of orQueries) {
+      const key = JSON.stringify(q);
+      if (!seen.has(key)) {
+        seen.add(key);
+        uniqueOr.push(q);
+      }
+    }
+
+    // Try to update using $or
+    const query = { $or: uniqueOr };
+
     const result = await db.collection("tblorders").findOneAndUpdate(
-      { _id: new ObjectId(orderId) },
+      query,
       {
         $set: {
           status,
@@ -582,10 +615,8 @@ app.patch("/orders/:orderId/status", async (req, res) => {
     );
 
     if (!result.value) {
-      console.log("Order not found for id (status change):", orderId, "->", status);
-      return res
-        .status(404)
-        .json({ success: false, message: "Order not found" });
+      console.log("DEBUG: Order not found for queries:", JSON.stringify(uniqueOr));
+      return res.status(404).json({ success: false, message: "Order not found" });
     }
 
     return res.json({
@@ -595,9 +626,7 @@ app.patch("/orders/:orderId/status", async (req, res) => {
     });
   } catch (err) {
     console.error("PATCH /orders/:orderId/status error:", err);
-    return res
-      .status(500)
-      .json({ success: false, message: "Failed to update status" });
+    return res.status(500).json({ success: false, message: "Failed to update status" });
   }
 });
 
