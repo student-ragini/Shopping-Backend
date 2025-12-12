@@ -160,28 +160,68 @@ app.put("/customers/:userId", async (req, res) => {
 app.post("/createorder", async (req, res) => {
   try {
     const db = await getDb();
-    const cleanItems = req.body.items.map(i => ({
-      productId: String(i.productId),
-      title: i.title || "Item",
-      qty: Number(i.qty || 1),
-      unitPrice: Number(i.unitPrice || 0),
-      lineTotal: Number(i.lineTotal || (i.unitPrice * i.qty))
-    }));
+    const items = req.body.items || [];
+
+    if (!items.length) {
+      return res.status(400).json({ success: false, message: "No items" });
+    }
+
+    const cleanItems = [];
+
+    for (const i of items) {
+      const pid = i.productId;
+
+      let product = null;
+      if (/^[0-9a-fA-F]{24}$/.test(pid)) {
+        product = await db
+          .collection("tblproducts")
+          .findOne({ _id: new ObjectId(pid) });
+      }
+
+      if (!product) {
+        product = await db
+          .collection("tblproducts")
+          .findOne({ id: pid });
+      }
+
+      if (!product) {
+        return res.status(404).json({
+          success: false,
+          message: "Product not found",
+        });
+      }
+
+      const qty = Number(i.qty || 1);
+      const price = Number(product.price || product.Price || 0);
+
+      cleanItems.push({
+        productId: String(product._id),
+        title: product.title || product.name || "Item",
+        qty,
+        unitPrice: price,
+        lineTotal: price * qty,
+      });
+    }
 
     const order = {
       userId: req.body.userId,
       items: cleanItems,
-      subtotal: req.body.subtotal,
-      shipping: req.body.shipping,
-      tax: req.body.tax,
-      total: req.body.total,
+      subtotal: cleanItems.reduce((s, i) => s + i.lineTotal, 0),
+      shipping: req.body.shipping || 0,
+      tax: req.body.tax || 0,
+      total:
+        cleanItems.reduce((s, i) => s + i.lineTotal, 0) +
+        (req.body.shipping || 0) +
+        (req.body.tax || 0),
       status: "Created",
-      createdAt: new Date()
+      createdAt: new Date(),
     };
 
     const r = await db.collection("tblorders").insertOne(order);
+
     res.json({ success: true, orderId: r.insertedId });
-  } catch {
+  } catch (err) {
+    console.error("createorder error:", err);
     res.status(500).json({ success: false });
   }
 });
