@@ -1,4 +1,6 @@
-// api.cjs
+// api.cjs (updated - full file)
+
+
 const express = require("express");
 const { MongoClient, ObjectId } = require("mongodb");
 const cors = require("cors");
@@ -22,6 +24,14 @@ app.use(
     methods: "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS",
   })
 );
+
+// Simple request logger (useful for debugging; remove or comment in production)
+app.use((req, res, next) => {
+  try {
+    console.log(new Date().toISOString(), req.method, req.path);
+  } catch {}
+  next();
+});
 
 app.use(express.static(path.join(__dirname, "public")));
 
@@ -449,7 +459,7 @@ app.post("/createorder", async (req, res) => {
 
     for (const it of items) {
       const key = String(it.productId);
-      const prod = productMap[key];
+      let prod = productMap[key];
       if (!prod) {
         // try to find by numeric or _id more leniently
         let found = null;
@@ -465,8 +475,7 @@ app.post("/createorder", async (req, res) => {
             message: `Product not found: ${it.productId}`,
           });
         }
-        // use found as prod
-        Object.assign(prod || {}, found);
+        prod = found;
       }
 
       const unitPrice = Number((prod && (prod.price || prod.Price)) || 0);
@@ -485,7 +494,7 @@ app.post("/createorder", async (req, res) => {
 
       validatedItems.push({
         productId: canonicalId,
-        originalProductRef: it.productId, // keep original for debugging/client if needed
+        originalProductRef: it.productId,
         title: prod.title || prod.name || "",
         unitPrice,
         qty,
@@ -581,6 +590,43 @@ app.get("/orders/:orderId", async (req, res) => {
     return res
       .status(500)
       .json({ success: false, message: "Failed to fetch order" });
+  }
+});
+
+/*
+ * NEW: Return order status (convenience GET)
+ * - Useful for manually opening the URL in browser for quick check
+ * - Supports ObjectId or returns 404 if not found
+ */
+app.get("/orders/:orderId/status", async (req, res) => {
+  try {
+    const orderId = String(req.params.orderId || "").trim();
+    const db = await getDb();
+
+    // attempt ObjectId lookup if valid
+    if (isValidObjectId(orderId)) {
+      const order = await db
+        .collection("tblorders")
+        .findOne({ _id: new ObjectId(orderId) });
+
+      if (order) {
+        return res.json({ success: true, status: order.status || "Created", order });
+      }
+    }
+
+    // fallback: try lookup by string id field or user-friendly id
+    const orderByOther = await db
+      .collection("tblorders")
+      .findOne({ $or: [{ orderId: orderId }, { _id: orderId }, { id: orderId }] });
+
+    if (orderByOther) {
+      return res.json({ success: true, status: orderByOther.status || "Created", order: orderByOther });
+    }
+
+    return res.status(404).json({ success: false, message: "Order not found" });
+  } catch (err) {
+    console.error("GET /orders/:orderId/status error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
