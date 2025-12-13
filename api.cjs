@@ -160,60 +160,62 @@ app.put("/customers/:userId", async (req, res) => {
 app.post("/createorder", async (req, res) => {
   try {
     const db = await getDb();
-    const { userId, items = [], shipping = 0, tax = 0 } = req.body;
+    const items = req.body.items || [];
 
-    if (!userId || !items.length) {
-      return res.status(400).json({ success: false, message: "Invalid order" });
+    if (!items.length) {
+      return res.status(400).json({ success: false, message: "No items" });
     }
 
-    const finalItems = [];
-    let subtotal = 0;
+    const cleanItems = [];
 
     for (const i of items) {
-      const pid = String(i.productId);
-      const qty = Number(i.qty || 1);
-
       let product = null;
 
-      if (isObjectId(pid)) {
+      // find product by ObjectId
+      if (i.productId && /^[0-9a-fA-F]{24}$/.test(i.productId)) {
         product = await db
           .collection("tblproducts")
-          .findOne({ _id: new ObjectId(pid) });
+          .findOne({ _id: new ObjectId(i.productId) });
       }
 
-      if (!product) {
-        product = await db.collection("tblproducts").findOne({ id: pid });
+      // fallback: find by custom id
+      if (!product && i.productId) {
+        product = await db
+          .collection("tblproducts")
+          .findOne({ id: i.productId });
       }
 
       if (!product) {
         return res.status(404).json({
           success: false,
-          message: "Product not found",
+          message: "Product not found while creating order",
         });
       }
 
+      const qty = Number(i.qty || 1);
       const price = Number(product.price || product.Price || 0);
-      const title = product.title || product.name || "Item";
 
-      const lineTotal = price * qty;
-      subtotal += lineTotal;
-
-      finalItems.push({
-        productId: String(product._id || product.id),
-        title,              // ✅ ALWAYS REAL TITLE
-        qty,
+      cleanItems.push({
+        productId: String(product._id),
+        title: product.title || product.name || "Item",
+        qty: qty,
         unitPrice: price,
-        lineTotal,
+        lineTotal: price * qty,
       });
     }
 
+    const subtotal = cleanItems.reduce((s, i) => s + i.lineTotal, 0);
+
     const order = {
-      userId,
-      items: finalItems,
-      subtotal,
-      shipping,
-      tax,
-      total: subtotal + shipping + tax,
+      userId: req.body.userId,
+      items: cleanItems,
+      subtotal: subtotal,
+      shipping: Number(req.body.shipping || 0),
+      tax: Number(req.body.tax || 0),
+      total:
+        subtotal +
+        Number(req.body.shipping || 0) +
+        Number(req.body.tax || 0),
       status: "Created",
       createdAt: new Date(),
     };
