@@ -287,20 +287,42 @@ app.post("/admin/login", async (req, res) => {
     const db = await getDb();
     const { username, password } = req.body;
 
+    if (!username || !password) {
+      return res.json({
+        success: false,
+        message: "Username or password missing",
+      });
+    }
+
     const admin = await db
       .collection("tbladmins")
       .findOne({ username });
 
-    if (!admin)
-      return res.json({ success: false, message: "Invalid username" });
+    if (!admin) {
+      return res.json({
+        success: false,
+        message: "Invalid username",
+      });
+    }
 
-    if (admin.password !== password)
-      return res.json({ success: false, message: "Invalid password" });
+    // plain text password (same as MongoDB)
+    if (admin.password !== password) {
+      return res.json({
+        success: false,
+        message: "Invalid password",
+      });
+    }
 
-    res.json({ success: true });
+    res.json({
+      success: true,
+      username: admin.username,
+    });
   } catch (err) {
     console.error("Admin login error:", err);
-    res.status(500).json({ success: false });
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
   }
 });
 
