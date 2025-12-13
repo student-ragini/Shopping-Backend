@@ -45,7 +45,6 @@ app.get("/products/:id", async (req, res) => {
     const id = req.params.id;
 
     let product = null;
-
     if (isObjectId(id)) {
       product = await db
         .collection("tblproducts")
@@ -53,11 +52,10 @@ app.get("/products/:id", async (req, res) => {
     } else {
       product = await db.collection("tblproducts").findOne({
         $or: [
-          { id: id },
+          { id: String(id) },
           { id: Number(id) },
-          { product_id: id },
-          { title: id }
-        ]
+          { title: id },
+        ],
       });
     }
 
@@ -81,23 +79,11 @@ app.get("/categories", async (req, res) => {
   }
 });
 
-app.get("/categories/:category", async (req, res) => {
-  try {
-    const db = await getDb();
-    const cat = req.params.category;
-    const data = await db.collection("tblproducts").find({
-      $or: [{ category: cat }, { Category: cat }]
-    }).toArray();
-    res.json(data);
-  } catch {
-    res.status(500).json({ message: "Category error" });
-  }
-});
-
-/* ================= AUTH ================= */
+/* ================= AUTH (CUSTOMER) ================= */
 app.post("/customerregister", async (req, res) => {
   try {
     const db = await getDb();
+
     const exists = await db
       .collection("tblcustomers")
       .findOne({ UserId: req.body.UserId });
@@ -117,6 +103,7 @@ app.post("/customerregister", async (req, res) => {
 app.post("/login", async (req, res) => {
   try {
     const db = await getDb();
+
     const user = await db
       .collection("tblcustomers")
       .findOne({ UserId: req.body.UserId });
@@ -136,6 +123,7 @@ app.post("/login", async (req, res) => {
 app.get("/customers/:userId", async (req, res) => {
   try {
     const db = await getDb();
+
     const user = await db.collection("tblcustomers").findOne(
       { UserId: req.params.userId },
       { projection: { Password: 0 } }
@@ -160,9 +148,10 @@ app.put("/customers/:userId", async (req, res) => {
       delete data.Password;
     }
 
-    await db
-      .collection("tblcustomers")
-      .updateOne({ UserId: req.params.userId }, { $set: data });
+    await db.collection("tblcustomers").updateOne(
+      { UserId: req.params.userId },
+      { $set: data }
+    );
 
     const updated = await db.collection("tblcustomers").findOne(
       { UserId: req.params.userId },
@@ -175,7 +164,7 @@ app.put("/customers/:userId", async (req, res) => {
   }
 });
 
-/* ================= ORDERS (FIXED) ================= */
+/* ================= ORDERS ================= */
 app.post("/createorder", async (req, res) => {
   try {
     const db = await getDb();
@@ -191,57 +180,61 @@ app.post("/createorder", async (req, res) => {
 
     for (const i of items) {
       const pid = String(i.productId);
+
       let product = null;
 
-      // by _id
       if (isObjectId(pid)) {
         product = await db
           .collection("tblproducts")
           .findOne({ _id: new ObjectId(pid) });
       }
 
-      // by id (number/string)
       if (!product) {
         product = await db.collection("tblproducts").findOne({
-          $or: [{ id: pid }, { id: Number(pid) }]
+          $or: [{ id: pid }, { id: Number(pid) }],
         });
       }
 
       if (!product) {
         return res.status(404).json({
           success: false,
-          message: "Product not found while creating order"
+          message: "Product not found while creating order",
         });
       }
 
       const qty = Number(i.qty || 1);
-      const price = Number(product.price || product.Price || 0);
+      const price = Number(product.price || product.Price || i.unitPrice || 0);
 
       cleanItems.push({
         productId: String(product._id),
         title: product.title || product.name || "Item",
         qty,
         unitPrice: price,
-        lineTotal: price * qty
+        lineTotal: price * qty,
       });
     }
 
-    const subtotal = cleanItems.reduce((s, i) => s + i.lineTotal, 0);
-    const shipping = Number(req.body.shipping || 0);
-    const tax = Number(req.body.tax || 0);
+    const subtotal = cleanItems.reduce(
+      (s, i) => s + i.lineTotal,
+      0
+    );
 
     const order = {
       userId: req.body.userId,
       items: cleanItems,
       subtotal,
-      shipping,
-      tax,
-      total: subtotal + shipping + tax,
+      shipping: Number(req.body.shipping || 0),
+      tax: Number(req.body.tax || 0),
+      total:
+        subtotal +
+        Number(req.body.shipping || 0) +
+        Number(req.body.tax || 0),
       status: "Created",
-      createdAt: new Date()
+      createdAt: new Date(),
     };
 
     const r = await db.collection("tblorders").insertOne(order);
+
     res.json({ success: true, orderId: r.insertedId });
   } catch (err) {
     console.error("createorder error:", err);
@@ -252,6 +245,7 @@ app.post("/createorder", async (req, res) => {
 app.get("/orders/:userId", async (req, res) => {
   try {
     const db = await getDb();
+
     const orders = await db
       .collection("tblorders")
       .find({ userId: req.params.userId })
@@ -266,10 +260,12 @@ app.get("/orders/:userId", async (req, res) => {
 
 app.patch("/orders/:orderId/status", async (req, res) => {
   try {
-    if (!isObjectId(req.params.orderId))
+    if (!isObjectId(req.params.orderId)) {
       return res.status(400).json({ success: false });
+    }
 
     const db = await getDb();
+
     const r = await db.collection("tblorders").updateOne(
       { _id: new ObjectId(req.params.orderId) },
       { $set: { status: req.body.status, updatedAt: new Date() } }
@@ -284,14 +280,58 @@ app.patch("/orders/:orderId/status", async (req, res) => {
   }
 });
 
+/* ================= ADMIN ================= */
+/* Plain password (as per your DB) */
+app.post("/admin/login", async (req, res) => {
+  try {
+    const db = await getDb();
+    const { username, password } = req.body;
+
+    const admin = await db
+      .collection("tbladmins")
+      .findOne({ username });
+
+    if (!admin)
+      return res.json({ success: false, message: "Invalid username" });
+
+    if (admin.password !== password)
+      return res.json({ success: false, message: "Invalid password" });
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Admin login error:", err);
+    res.status(500).json({ success: false });
+  }
+});
+
+app.get("/admin/orders", async (req, res) => {
+  try {
+    const db = await getDb();
+
+    const q =
+      req.query.status && req.query.status !== "All"
+        ? { status: req.query.status }
+        : {};
+
+    const orders = await db
+      .collection("tblorders")
+      .find(q)
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.json({ success: true, orders });
+  } catch {
+    res.status(500).json({ success: false });
+  }
+});
+
 /* ================= CART ================= */
 app.post("/addtocart", async (req, res) => {
   try {
     const db = await getDb();
     await db.collection("tblshoppingcart").insertOne({
       ...req.body,
-      productId: String(req.body.productId),
-      addedAt: new Date()
+      addedAt: new Date(),
     });
     res.json({ success: true });
   } catch {
@@ -306,7 +346,6 @@ app.get("/getcart/:userId", async (req, res) => {
       .collection("tblshoppingcart")
       .find({ userId: req.params.userId })
       .toArray();
-
     res.json(cart);
   } catch {
     res.status(500).json({ success: false });
