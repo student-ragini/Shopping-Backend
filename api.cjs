@@ -307,20 +307,33 @@ app.patch("/orders/:orderId/status", async (req, res) => {
 });
 
 /* ================= ADMIN ================= */
-
 app.post("/admin/login", async (req, res) => {
   try {
     const db = await getDb();
     const { username, password } = req.body;
 
+    if (!username || !password) {
+      return res.json({
+        success: false,
+        message: "Username or password missing",
+      });
+    }
+
     const admin = await db.collection("tbladmins").findOne({ username });
 
     if (!admin || admin.password !== password) {
-      return res.json({ success: false, message: "Invalid credentials" });
+      return res.json({
+        success: false,
+        message: "Invalid credentials",
+      });
     }
 
-    res.json({ success: true });
+    res.json({
+      success: true,
+      username: admin.username,
+    });
   } catch (err) {
+    console.error(err);
     res.status(500).json({ success: false });
   }
 });
@@ -341,7 +354,8 @@ app.get("/admin/orders", async (req, res) => {
       .toArray();
 
     res.json({ success: true, orders });
-  } catch {
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ success: false });
   }
 });
