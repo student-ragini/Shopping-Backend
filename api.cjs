@@ -29,51 +29,24 @@ async function getDb() {
 const isObjectId = (id) => /^[0-9a-fA-F]{24}$/.test(id);
 
 /* ================= PRODUCTS ================= */
-
-// all products (old – safe)
 app.get("/getproducts", async (req, res) => {
   try {
     const db = await getDb();
     const data = await db.collection("tblproducts").find({}).toArray();
     res.json(data);
-  } catch {
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ message: "Products error" });
   }
 });
 
-// all products + category (NEW – frontend use)
-app.get("/products", async (req, res) => {
-  try {
-    const db = await getDb();
-    let filter = {};
-
-    if (req.query.category) {
-      filter = {
-        $or: [
-          { category: req.query.category },
-          { Category: req.query.category },
-        ],
-      };
-    }
-
-    const products = await db
-      .collection("tblproducts")
-      .find(filter)
-      .toArray();
-
-    res.json(products);
-  } catch {
-    res.status(500).json({ message: "Unable to load products" });
-  }
-});
-
-// single product
 app.get("/products/:id", async (req, res) => {
   try {
     const db = await getDb();
     const id = req.params.id;
 
     let product = null;
+
     if (isObjectId(id)) {
       product = await db
         .collection("tblproducts")
@@ -84,12 +57,38 @@ app.get("/products/:id", async (req, res) => {
       });
     }
 
-    if (!product)
+    if (!product) {
       return res.status(404).json({ message: "Product not found" });
+    }
 
     res.json(product);
-  } catch {
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ message: "Product error" });
+  }
+});
+
+/* ================= PRODUCTS BY CATEGORY (FIX) ================= */
+app.get("/categories/:name", async (req, res) => {
+  try {
+    const db = await getDb();
+    const name = decodeURIComponent(req.params.name);
+
+    const products = await db
+      .collection("tblproducts")
+      .find({
+        $or: [
+          { category: name },
+          { Category: name },
+          { CategoryName: name },
+        ],
+      })
+      .toArray();
+
+    res.json(products);
+  } catch (err) {
+    console.error("Category products error:", err);
+    res.status(500).json({ message: "Category products error" });
   }
 });
 
@@ -99,7 +98,8 @@ app.get("/categories", async (req, res) => {
     const db = await getDb();
     const data = await db.collection("tblcategories").find({}).toArray();
     res.json(data);
-  } catch {
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ message: "Categories error" });
   }
 });
@@ -113,14 +113,16 @@ app.post("/customerregister", async (req, res) => {
       .collection("tblcustomers")
       .findOne({ UserId: req.body.UserId });
 
-    if (exists)
+    if (exists) {
       return res.json({ success: false, message: "User exists" });
+    }
 
     req.body.Password = await bcrypt.hash(req.body.Password, 10);
     await db.collection("tblcustomers").insertOne(req.body);
 
     res.json({ success: true });
-  } catch {
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ success: false });
   }
 });
@@ -139,7 +141,8 @@ app.post("/login", async (req, res) => {
     if (!ok) return res.json({ success: false });
 
     res.json({ success: true, userId: user.UserId });
-  } catch {
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ success: false });
   }
 });
@@ -157,7 +160,8 @@ app.get("/customers/:userId", async (req, res) => {
     if (!user) return res.status(404).json({ success: false });
 
     res.json({ success: true, customer: user });
-  } catch {
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ success: false });
   }
 });
@@ -184,7 +188,8 @@ app.put("/customers/:userId", async (req, res) => {
     );
 
     res.json({ success: true, customer: updated });
-  } catch {
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ success: false });
   }
 });
@@ -228,7 +233,7 @@ app.post("/createorder", async (req, res) => {
       }
 
       const qty = Number(i.qty || 1);
-      const price = Number(product.price || product.Price || i.unitPrice || 0);
+      const price = Number(product.price || product.Price || 0);
 
       cleanItems.push({
         productId: String(product._id),
@@ -239,10 +244,7 @@ app.post("/createorder", async (req, res) => {
       });
     }
 
-    const subtotal = cleanItems.reduce(
-      (s, i) => s + i.lineTotal,
-      0
-    );
+    const subtotal = cleanItems.reduce((s, i) => s + i.lineTotal, 0);
 
     const order = {
       userId: req.body.userId,
@@ -250,8 +252,7 @@ app.post("/createorder", async (req, res) => {
       subtotal,
       shipping: Number(req.body.shipping || 0),
       tax: Number(req.body.tax || 0),
-      total:
-        subtotal +
+      total: subtotal +
         Number(req.body.shipping || 0) +
         Number(req.body.tax || 0),
       status: "Created",
@@ -259,10 +260,9 @@ app.post("/createorder", async (req, res) => {
     };
 
     const r = await db.collection("tblorders").insertOne(order);
-
     res.json({ success: true, orderId: r.insertedId });
   } catch (err) {
-    console.error("createorder error:", err);
+    console.error(err);
     res.status(500).json({ success: false });
   }
 });
@@ -270,7 +270,6 @@ app.post("/createorder", async (req, res) => {
 app.get("/orders/:userId", async (req, res) => {
   try {
     const db = await getDb();
-
     const orders = await db
       .collection("tblorders")
       .find({ userId: req.params.userId })
@@ -278,7 +277,8 @@ app.get("/orders/:userId", async (req, res) => {
       .toArray();
 
     res.json({ success: true, orders });
-  } catch {
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ success: false });
   }
 });
@@ -290,23 +290,23 @@ app.patch("/orders/:orderId/status", async (req, res) => {
     }
 
     const db = await getDb();
-
     const r = await db.collection("tblorders").updateOne(
       { _id: new ObjectId(req.params.orderId) },
       { $set: { status: req.body.status, updatedAt: new Date() } }
     );
 
-    if (!r.matchedCount)
+    if (!r.matchedCount) {
       return res.status(404).json({ success: false });
+    }
 
     res.json({ success: true });
-  } catch {
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ success: false });
   }
 });
 
 /* ================= ADMIN ================= */
-/* Plain password (as per your DB) */
 app.post("/admin/login", async (req, res) => {
   try {
     const db = await getDb();
@@ -319,22 +319,12 @@ app.post("/admin/login", async (req, res) => {
       });
     }
 
-    const admin = await db
-      .collection("tbladmins")
-      .findOne({ username });
+    const admin = await db.collection("tbladmins").findOne({ username });
 
-    if (!admin) {
+    if (!admin || admin.password !== password) {
       return res.json({
         success: false,
-        message: "Invalid username",
-      });
-    }
-
-    // plain text password (same as MongoDB)
-    if (admin.password !== password) {
-      return res.json({
-        success: false,
-        message: "Invalid password",
+        message: "Invalid credentials",
       });
     }
 
@@ -343,11 +333,8 @@ app.post("/admin/login", async (req, res) => {
       username: admin.username,
     });
   } catch (err) {
-    console.error("Admin login error:", err);
-    res.status(500).json({
-      success: false,
-      message: "Server error",
-    });
+    console.error(err);
+    res.status(500).json({ success: false });
   }
 });
 
@@ -367,7 +354,8 @@ app.get("/admin/orders", async (req, res) => {
       .toArray();
 
     res.json({ success: true, orders });
-  } catch {
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ success: false });
   }
 });
@@ -381,7 +369,8 @@ app.post("/addtocart", async (req, res) => {
       addedAt: new Date(),
     });
     res.json({ success: true });
-  } catch {
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ success: false });
   }
 });
@@ -394,7 +383,8 @@ app.get("/getcart/:userId", async (req, res) => {
       .find({ userId: req.params.userId })
       .toArray();
     res.json(cart);
-  } catch {
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ success: false });
   }
 });
