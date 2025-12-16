@@ -29,6 +29,8 @@ async function getDb() {
 const isObjectId = (id) => /^[0-9a-fA-F]{24}$/.test(id);
 
 /* ================= PRODUCTS ================= */
+
+// all products (old – safe)
 app.get("/getproducts", async (req, res) => {
   try {
     const db = await getDb();
@@ -39,6 +41,33 @@ app.get("/getproducts", async (req, res) => {
   }
 });
 
+// all products + category (NEW – frontend use)
+app.get("/products", async (req, res) => {
+  try {
+    const db = await getDb();
+    let filter = {};
+
+    if (req.query.category) {
+      filter = {
+        $or: [
+          { category: req.query.category },
+          { Category: req.query.category },
+        ],
+      };
+    }
+
+    const products = await db
+      .collection("tblproducts")
+      .find(filter)
+      .toArray();
+
+    res.json(products);
+  } catch {
+    res.status(500).json({ message: "Unable to load products" });
+  }
+});
+
+// single product
 app.get("/products/:id", async (req, res) => {
   try {
     const db = await getDb();
@@ -51,11 +80,7 @@ app.get("/products/:id", async (req, res) => {
         .findOne({ _id: new ObjectId(id) });
     } else {
       product = await db.collection("tblproducts").findOne({
-        $or: [
-          { id: String(id) },
-          { id: Number(id) },
-          { title: id },
-        ],
+        $or: [{ id: String(id) }, { id: Number(id) }, { title: id }],
       });
     }
 
