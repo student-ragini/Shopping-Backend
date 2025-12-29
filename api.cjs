@@ -29,11 +29,14 @@ async function getDb() {
 const isObjectId = (id) => /^[0-9a-fA-F]{24}$/.test(id);
 
 /* ================= PRODUCTS ================= */
-app.get("/getproducts", async (req, res) => {
+app.get("/products", async (req, res) => {
   try {
     const db = await getDb();
-    const data = await db.collection("tblproducts").find({}).toArray();
-    res.json(data);
+    const products = await db
+      .collection("tblproducts")
+      .find({})
+      .toArray();
+    res.json(products);
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Products error" });
@@ -65,6 +68,95 @@ app.get("/products/:id", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Product error" });
+  }
+});
+
+/* ================= PRODUCT RATING ================= */
+
+// ADD / UPDATE RATING
+app.post("/products/:id/rate", async (req, res) => {
+  try {
+    const db = await getDb();
+    const { userId, rating } = req.body;
+    const productId = req.params.id;
+
+    if (!userId || !rating) {
+      return res.json({ success: false, message: "Missing data" });
+    }
+
+    if (rating < 1 || rating > 5) {
+      return res.json({ success: false, message: "Invalid rating" });
+    }
+
+    if (!isObjectId(productId)) {
+      return res.json({ success: false, message: "Invalid product id" });
+    }
+
+    const pid = new ObjectId(productId);
+
+    const existing = await db.collection("tblratings").findOne({
+      productId: pid,
+      userId,
+    });
+
+    if (existing) {
+      await db.collection("tblratings").updateOne(
+        { _id: existing._id },
+        { $set: { rating, updatedAt: new Date() } }
+      );
+    } else {
+      await db.collection("tblratings").insertOne({
+        productId: pid,
+        userId,
+        rating,
+        createdAt: new Date(),
+      });
+    }
+
+    // calculate average
+    const stats = await db.collection("tblratings").aggregate([
+      { $match: { productId: pid } },
+      {
+        $group: {
+          _id: "$productId",
+          avg: { $avg: "$rating" },
+          count: { $sum: 1 },
+        },
+      },
+    ]).toArray();
+
+    const avg = stats[0]?.avg || 0;
+    const count = stats[0]?.count || 0;
+
+    await db.collection("tblproducts").updateOne(
+      { _id: pid },
+      { $set: { rating: { avg: Number(avg.toFixed(1)), count } } }
+    );
+
+    res.json({ success: true, avg: Number(avg.toFixed(1)), count });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false });
+  }
+});
+
+// GET PRODUCT RATING
+app.get("/products/:id/rating", async (req, res) => {
+  try {
+    const db = await getDb();
+    const pid = new ObjectId(req.params.id);
+
+    const product = await db.collection("tblproducts").findOne(
+      { _id: pid },
+      { projection: { rating: 1 } }
+    );
+
+    res.json({
+      success: true,
+      rating: product?.rating || { avg: 0, count: 0 },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false });
   }
 });
 
@@ -130,22 +222,36 @@ app.post("/customerregister", async (req, res) => {
 app.post("/login", async (req, res) => {
   try {
     const db = await getDb();
+    const { UserId, Password } = req.body;
+
+    if (!UserId || !Password) {
+      return res.json({ success: false, message: "Missing credentials" });
+    }
 
     const user = await db
       .collection("tblcustomers")
-      .findOne({ UserId: req.body.UserId });
+      .findOne({ UserId });
 
-    if (!user) return res.json({ success: false });
+    if (!user) {
+      return res.json({ success: false, message: "Invalid UserId" });
+    }
 
-    const ok = await bcrypt.compare(req.body.Password, user.Password);
-    if (!ok) return res.json({ success: false });
+    const ok = await bcrypt.compare(Password, user.Password);
+    if (!ok) {
+      return res.json({ success: false, message: "Invalid Password" });
+    }
 
-    res.json({ success: true, userId: user.UserId });
+    res.json({
+      success: true,
+      userId: user.UserId,
+      name: user.FirstName,
+    });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false });
+    console.error("LOGIN ERROR:", err);
+    res.status(500).json({ success: false, message: "Server error" });
   }
 });
+
 
 /* ================= PROFILE ================= */
 app.get("/customers/:userId", async (req, res) => {
