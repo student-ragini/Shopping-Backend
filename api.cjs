@@ -427,7 +427,17 @@ app.post("/admin/login", async (req, res) => {
 
     const admin = await db.collection("tbladmins").findOne({ username });
 
-    if (!admin || admin.password !== password) {
+    if (!admin) {
+      return res.json({
+        success: false,
+        message: "Invalid credentials",
+      });
+    }
+
+    // ✅ bcrypt compare
+    const match = await bcrypt.compare(password, admin.password);
+
+    if (!match) {
       return res.json({
         success: false,
         message: "Invalid credentials",
@@ -462,6 +472,30 @@ app.get("/admin/orders", async (req, res) => {
     res.json({ success: true, orders });
   } catch (err) {
     console.error(err);
+    res.status(500).json({ success: false });
+  }
+});
+
+app.post("/admin/create", async (req, res) => {
+  try {
+    const db = await getDb();
+    const { username, password } = req.body;
+
+    const exists = await db.collection("tbladmins").findOne({ username });
+    if (exists) {
+      return res.json({ success: false, message: "Admin already exists" });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    await db.collection("tbladmins").insertOne({
+      username,
+      password: hashedPassword,
+      createdAt: new Date(),
+    });
+
+    res.json({ success: true });
+  } catch (err) {
     res.status(500).json({ success: false });
   }
 });
