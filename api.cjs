@@ -412,7 +412,6 @@ app.patch("/orders/:orderId/status", async (req, res) => {
   }
 });
 
-/* ================= ADMIN ================= */
 app.post("/admin/login", async (req, res) => {
   try {
     const db = await getDb();
@@ -426,7 +425,6 @@ app.post("/admin/login", async (req, res) => {
     }
 
     const admin = await db.collection("tbladmins").findOne({ username });
-
     if (!admin) {
       return res.json({
         success: false,
@@ -434,10 +432,8 @@ app.post("/admin/login", async (req, res) => {
       });
     }
 
-    // ✅ bcrypt compare
-    const match = await bcrypt.compare(password, admin.password);
-
-    if (!match) {
+    const isMatch = await bcrypt.compare(password, admin.password);
+    if (!isMatch) {
       return res.json({
         success: false,
         message: "Invalid credentials",
