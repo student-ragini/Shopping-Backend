@@ -1,4 +1,3 @@
-// api.cjs
 const express = require("express");
 const { MongoClient, ObjectId } = require("mongodb");
 const cors = require("cors");
@@ -7,12 +6,10 @@ require("dotenv").config();
 
 const app = express();
 
-/* ================= MIDDLEWARE ================= */
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cors({ origin: true }));
 
-/* ================= MONGO ================= */
 const MONGO_URI = process.env.MONGO_URI;
 const DB_NAME = process.env.DB_NAME || "ishopdb";
 
@@ -28,7 +25,6 @@ async function getDb() {
 
 const isObjectId = (id) => /^[0-9a-fA-F]{24}$/.test(id);
 
-/* ================= PRODUCTS ================= */
 app.get("/products", async (req, res) => {
   try {
     const db = await getDb();
@@ -71,9 +67,6 @@ app.get("/products/:id", async (req, res) => {
   }
 });
 
-/* ================= PRODUCT RATING ================= */
-
-// ADD / UPDATE RATING
 app.post("/products/:id/rate", async (req, res) => {
   try {
     const db = await getDb();
@@ -113,7 +106,6 @@ app.post("/products/:id/rate", async (req, res) => {
       });
     }
 
-    // calculate average
     const stats = await db.collection("tblratings").aggregate([
       { $match: { productId: pid } },
       {
@@ -140,7 +132,7 @@ app.post("/products/:id/rate", async (req, res) => {
   }
 });
 
-// GET PRODUCT RATING
+
 app.get("/products/:id/rating", async (req, res) => {
   try {
     const db = await getDb();
@@ -160,7 +152,6 @@ app.get("/products/:id/rating", async (req, res) => {
   }
 });
 
-/* ================= PRODUCTS BY CATEGORY (FIX) ================= */
 app.get("/categories/:name", async (req, res) => {
   try {
     const db = await getDb();
@@ -184,7 +175,6 @@ app.get("/categories/:name", async (req, res) => {
   }
 });
 
-/* ================= CATEGORIES ================= */
 app.get("/categories", async (req, res) => {
   try {
     const db = await getDb();
@@ -196,7 +186,6 @@ app.get("/categories", async (req, res) => {
   }
 });
 
-/* ================= AUTH (CUSTOMER) ================= */
 app.post("/customerregister", async (req, res) => {
   try {
     const db = await getDb();
@@ -252,8 +241,6 @@ app.post("/login", async (req, res) => {
   }
 });
 
-
-/* ================= PROFILE ================= */
 app.get("/customers/:userId", async (req, res) => {
   try {
     const db = await getDb();
@@ -300,7 +287,6 @@ app.put("/customers/:userId", async (req, res) => {
   }
 });
 
-/* ================= ORDERS ================= */
 app.post("/createorder", async (req, res) => {
   try {
     const db = await getDb();
@@ -496,7 +482,6 @@ app.post("/admin/create", async (req, res) => {
   }
 });
 
-/* ================= CART ================= */
 app.post("/addtocart", async (req, res) => {
   try {
     const db = await getDb();
@@ -525,7 +510,6 @@ app.get("/getcart/:userId", async (req, res) => {
   }
 });
 
-/* ================= START ================= */
 const PORT = process.env.PORT || 4400;
 app.listen(PORT, () =>
   console.log("API running on port", PORT)
