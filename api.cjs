@@ -461,23 +461,38 @@ app.get("/admin/orders", async (req, res) => {
 app.post("/admin/create", async (req, res) => {
   try {
     const db = await getDb();
-    const { username, password } = req.body;
+
+    const { username, fullName, email, password } = req.body;
+
+    if (!username || !fullName || !email || !password) {
+      return res.json({
+        success: false,
+        message: "All fields are required",
+      });
+    }
 
     const exists = await db.collection("tbladmins").findOne({ username });
+
     if (exists) {
-      return res.json({ success: false, message: "Admin already exists" });
+      return res.json({
+        success: false,
+        message: "Admin already exists",
+      });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
     await db.collection("tbladmins").insertOne({
       username,
+      fullName,
+      email,
       password: hashedPassword,
       createdAt: new Date(),
     });
 
     res.json({ success: true });
   } catch (err) {
+    console.error(err);
     res.status(500).json({ success: false });
   }
 });
